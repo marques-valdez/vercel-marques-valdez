@@ -65,18 +65,30 @@ function base64UrlToBytes(slug: string): Uint8Array | null {
   return bytes;
 }
 
+function assertPlainObjectInput(input: unknown): void {
+  if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+    const proto = Object.getPrototypeOf(input);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new z.ZodError([
+        {
+          code: z.ZodIssueCode.custom,
+          path: [],
+          message: 'Expected plain object payload',
+        },
+      ]);
+    }
+  }
+}
+
 export function encodeCustomPlaybookSlug(input: CustomSlugPayload): string {
+  assertPlainObjectInput(input);
+  const validated = CustomSlugPayloadSchema.parse(input);
   const orderedChannels = CANONICAL_CHANNELS.filter((ch) =>
-    input.channels.includes(ch),
+    validated.channels.includes(ch),
   );
-  const validated = CustomSlugPayloadSchema.parse({
-    template: input.template,
-    channels: orderedChannels,
-    threshold: input.threshold,
-  });
   const json = JSON.stringify({
     template: validated.template,
-    channels: validated.channels,
+    channels: orderedChannels,
     threshold: validated.threshold,
   });
   const bytes = new TextEncoder().encode(json);
@@ -110,10 +122,12 @@ export function encodePlaybookSlug(
   input: CustomSlugPayload,
   options?: { preferAlias?: boolean },
 ): string {
+  assertPlainObjectInput(input);
+  const validated = CustomSlugPayloadSchema.parse(input);
   const orderedChannels = CANONICAL_CHANNELS.filter((ch) =>
-    input.channels.includes(ch),
+    validated.channels.includes(ch),
   );
-  const definition = PLAYBOOKS_BY_ID[input.template];
+  const definition = PLAYBOOKS_BY_ID[validated.template];
   const isDefaultChannels =
     orderedChannels.length === definition.defaultChannels.length &&
     orderedChannels.every((ch, idx) => ch === definition.defaultChannels[idx]);
@@ -121,14 +135,14 @@ export function encodePlaybookSlug(
   if (
     options?.preferAlias !== false &&
     isDefaultChannels &&
-    input.threshold === definition.defaultThreshold
+    validated.threshold === definition.defaultThreshold
   ) {
-    return input.template;
+    return validated.template;
   }
   return encodeCustomPlaybookSlug({
-    template: input.template,
+    template: validated.template,
     channels: orderedChannels,
-    threshold: input.threshold,
+    threshold: validated.threshold,
   });
 }
 
@@ -202,4 +216,32 @@ export function resolvePlaybookSlug(slug: string): ResolvedPlaybook | null {
     threshold: payload.threshold,
     steps: [...def.steps],
   };
+}
+
+export function resolveMetadataBase(
+  env: Record<string, string | undefined> = process.env,
+): URL {
+  const candidates = [
+    env.NEXT_PUBLIC_APP_URL,
+    env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL.replace(/^https?:\/\//i, '')}`
+      : undefined,
+    env.VERCEL_URL
+      ? `https://${env.VERCEL_URL.replace(/^https?:\/\//i, '')}`
+      : undefined,
+  ];
+  for (const raw of candidates) {
+    const trimmed = raw?.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      return new URL(trimmed);
+    } catch {
+      // Try next candidate
+    }
+  }
+  const rawPort = env.PORT?.trim() || '3000';
+  const port = /^\d+$/.test(rawPort) ? rawPort : '3000';
+  return new URL(`http://localhost:${port}`);
 }

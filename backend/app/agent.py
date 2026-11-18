@@ -211,11 +211,15 @@ def _gateway_attempted_failover(
         if not isinstance(meta, Mapping):
             continue
         gw = meta.get("gateway") if "gateway" in meta and isinstance(meta.get("gateway"), Mapping) else meta
-        routing = gw.get("routing") if isinstance(gw, Mapping) else None
-        if isinstance(routing, Mapping):
-            attempts = routing.get("modelAttempts") or routing.get("attempts")
-            if isinstance(attempts, list) and len(attempts) > 1:
+        if isinstance(gw, Mapping):
+            direct_attempts = gw.get("modelAttempts") or gw.get("attempts")
+            if isinstance(direct_attempts, list) and len(direct_attempts) > 1:
                 return True
+            routing = gw.get("routing")
+            if isinstance(routing, Mapping):
+                attempts = routing.get("modelAttempts") or routing.get("attempts")
+                if isinstance(attempts, list) and len(attempts) > 1:
+                    return True
     return False
 
 
@@ -449,7 +453,7 @@ def build_agent_graph(
                         name=tool_name,
                     )
                 )
-            except (ValidationError, ValueError, KeyError, ToolException, RuntimeError) as exc:
+            except (ValidationError, ValueError, KeyError, TypeError, ToolException, RuntimeError) as exc:
                 err_text = str(exc) or f"Tool {tool_name} failed"
                 writer(
                     {

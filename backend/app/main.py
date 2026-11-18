@@ -167,12 +167,13 @@ def reset_rate_limiter() -> None:
 
 
 def extract_client_ip(request: Request) -> str:
-    """Resolve client IP from first hop of X-Forwarded-For or request.client.host."""
+    """Resolve client IP from first non-empty hop of X-Forwarded-For or request.client.host."""
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        first_hop = xff.split(",")[0].strip()[:128]
-        if first_hop:
-            return first_hop
+        for raw_hop in xff.split(","):
+            hop = raw_hop.strip()[:128]
+            if hop:
+                return hop
     if request.client and request.client.host:
         return request.client.host[:128]
     return "unknown"

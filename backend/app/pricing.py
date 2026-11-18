@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 import math
 import os
+import time
 from typing import Any, Final, Literal, Mapping
 
 import httpx
@@ -63,8 +64,9 @@ PINNED_PRICES_2026_11_17: Final[dict[str, ModelPrice]] = {
     ),
 }
 
+PRICING_CACHE_TTL_SECONDS: Final[float] = 3600.0
 _live_prices: dict[str, ModelPrice] | None = None
-_fetch_attempted: bool = False
+_fetched_at: float | None = None
 _fetch_lock = asyncio.Lock()
 
 
@@ -118,23 +120,25 @@ def get_pricing_source() -> PricingSource:
 
 def reset_pricing_cache() -> None:
     """Reset module-memory pricing state (used in isolated unit tests)."""
-    global _live_prices, _fetch_attempted
+    global _live_prices, _fetched_at
     _live_prices = None
-    _fetch_attempted = False
+    _fetched_at = None
 
 
 async def ensure_model_prices_loaded() -> PricingSource:
-    """Fetch AI Gateway /v1/models once per process, falling back to pinned 2026-11-17 rates."""
-    global _live_prices, _fetch_attempted
-    if _fetch_attempted:
+    """Fetch AI Gateway /v1/models with TTL caching, falling back to pinned 2026-11-17 rates."""
+    global _live_prices, _fetched_at
+    now = time.monotonic()
+    if _fetched_at is not None and (now - _fetched_at) < PRICING_CACHE_TTL_SECONDS:
         return get_pricing_source()
     if os.getenv("PRICING_OFFLINE", "").strip().lower() in {"1", "true", "yes"}:
         return get_pricing_source()
 
     async with _fetch_lock:
-        if _fetch_attempted:
+        now = time.monotonic()
+        if _fetched_at is not None and (now - _fetched_at) < PRICING_CACHE_TTL_SECONDS:
             return get_pricing_source()
-        _fetch_attempted = True
+        _fetched_at = now
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(1.5, connect=0.8)

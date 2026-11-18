@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { CHANNEL_LABELS, WORKFLOW_NODE_NAMES } from '@/lib/playbooks';
+import React, { useEffect, useRef, useState } from 'react';
+import { CANONICAL_CHANNELS, CHANNEL_LABELS, WORKFLOW_NODE_NAMES } from '@/lib/playbooks';
 import { encodePlaybookSlug, PlaybookTemplateSchema, resolvePlaybookSlug } from '@/lib/share';
 import { readStoredMutations } from '@/lib/twin-client';
 import type {
@@ -47,20 +47,20 @@ function resolveValidShareSlug(output: WorkflowToolOutput): string {
   const template = parsedTemplate.success
     ? parsedTemplate.data
     : 'daily-pacing-guardrail';
-  const validChannels: ChannelId[] = Array.isArray(output.channels) && output.channels.length > 0
-    ? output.channels.filter(
-        (c): c is ChannelId =>
-          c === 'google_ads' || c === 'linkedin_ads' || c === 'meta_ads',
-      )
-    : ['google_ads', 'linkedin_ads', 'meta_ads'];
-  const clampedThreshold = Math.min(
-    100,
-    Math.max(1, Math.round(Number(output.threshold) || 15)),
-  );
+  const validChannels: ChannelId[] = Array.isArray(output.channels)
+    ? CANONICAL_CHANNELS.filter((c) => output.channels.includes(c))
+    : [];
+  const rawThreshold = Number(output.threshold);
+  const clampedThreshold = Number.isFinite(rawThreshold)
+    ? Math.min(100, Math.max(1, Math.round(rawThreshold)))
+    : 15;
 
   return encodePlaybookSlug({
     template,
-    channels: validChannels.length > 0 ? validChannels : ['google_ads'],
+    channels:
+      validChannels.length > 0
+        ? validChannels
+        : ['google_ads', 'linkedin_ads', 'meta_ads'],
     threshold: clampedThreshold,
   });
 }
@@ -76,6 +76,13 @@ export function WorkflowCard({
   const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [digestPreview, setDigestPreview] = useState<string | null>(null);
   const [stepStates, setStepStates] = useState<Record<string, StepRunState>>({});
+  const dryRunAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      dryRunAbortRef.current?.abort();
+    };
+  }, []);
 
   if (state === 'skeleton') {
     return (
@@ -119,6 +126,10 @@ export function WorkflowCard({
   });
 
   const handleTestRun = async () => {
+    dryRunAbortRef.current?.abort();
+    const controller = new AbortController();
+    dryRunAbortRef.current = controller;
+
     setRunningDryRun(true);
     setDryRunError(null);
     setDigestPreview(null);
@@ -135,6 +146,7 @@ export function WorkflowCard({
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
         body: JSON.stringify({
           workflow: output,
           mutations: readStoredMutations(),
@@ -265,6 +277,9 @@ export function WorkflowCard({
         return changed ? next : prev;
       });
     } catch (err) {
+      if (controller.signal.aborted) {
+        return;
+      }
       setStepStates((prev) => {
         const next: Record<string, StepRunState> = { ...prev };
         for (const key of Object.keys(next)) {
@@ -278,7 +293,12 @@ export function WorkflowCard({
         err instanceof Error ? err.message : 'Workflow dry run encountered an error.',
       );
     } finally {
-      setRunningDryRun(false);
+      if (dryRunAbortRef.current === controller) {
+        dryRunAbortRef.current = null;
+      }
+      if (!controller.signal.aborted) {
+        setRunningDryRun(false);
+      }
     }
   };
 
@@ -332,10 +352,12 @@ export function WorkflowCard({
                 <div className="workflow-step-timing mono-text">
                   {status === 'running'
                     ? 'Running…'
-                    : typeof runInfo?.ms === 'number'
-                      ? `${Math.round(runInfo.ms).toLocaleString('en-US')} ms`
-                      : status === 'failed'
-                        ? 'Failed'
+                    : status === 'failed'
+                      ? typeof runInfo?.ms === 'number'
+                        ? `Failed · ${Math.round(runInfo.ms).toLocaleString('en-US')} ms`
+                        : 'Failed'
+                      : typeof runInfo?.ms === 'number'
+                        ? `${Math.round(runInfo.ms).toLocaleString('en-US')} ms`
                         : 'Ready'}
                 </div>
               </div>

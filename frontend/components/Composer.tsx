@@ -2,7 +2,28 @@
 
 import React, { useEffect, useRef } from 'react';
 
-const MAX_INPUT_CHARS = 2000;
+export const MAX_INPUT_CHARS = 2000;
+
+export function sanitizeComposerInput(
+  raw: string,
+  maxChars: number = MAX_INPUT_CHARS,
+): string {
+  const sliced = raw.length > maxChars ? raw.slice(0, maxChars) : raw;
+  let out = '';
+  for (let i = 0; i < sliced.length; i += 1) {
+    const code = sliced.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = sliced.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += sliced[i] + sliced[i + 1];
+        i += 1;
+      }
+    } else if (!(code >= 0xdc00 && code <= 0xdfff)) {
+      out += sliced[i];
+    }
+  }
+  return out;
+}
 
 interface ComposerProps {
   value: string;
@@ -69,7 +90,7 @@ export function Composer({
           maxLength={MAX_INPUT_CHARS}
           disabled={isStreaming}
           value={value}
-          onChange={(e) => onChange(e.target.value.slice(0, MAX_INPUT_CHARS))}
+          onChange={(e) => onChange(sanitizeComposerInput(e.target.value, MAX_INPUT_CHARS))}
           onKeyDown={handleKeyDown}
           placeholder="Ask Relay about creative 404s, UTM tags, channel return on ad spend, budget shifts, or daily guardrails…"
         />

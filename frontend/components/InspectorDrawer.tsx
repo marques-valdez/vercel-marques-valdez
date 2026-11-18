@@ -85,13 +85,29 @@ interface ToolLedgerRow {
   costUsd: number;
 }
 
-function distributeInteger(total: number, parts: number, index: number): number {
+export function distributeInteger(total: number, parts: number, index: number): number {
   const base = Math.floor(total / parts);
   const remainder = total % parts;
   return base + (index < remainder ? 1 : 0);
 }
 
-function computeToolLedger(messages: RelayUIMessage[]): ToolLedgerRow[] {
+export function computeSessionSavings(entries: TelemetryData[]): {
+  actualUsd: number;
+  baselineUsd: number;
+  savedUsd: number;
+  savingsPercent: number;
+} {
+  const actualUsd = entries.reduce((s, e) => s + e.costUsd, 0);
+  const baselineUsd = entries.reduce((s, e) => s + e.baselineCostUsd, 0);
+  const savedUsd = Math.max(0, baselineUsd - actualUsd);
+  const savingsPercent =
+    baselineUsd > 0
+      ? Math.max(0, Math.round(((baselineUsd - actualUsd) / baselineUsd) * 100))
+      : 0;
+  return { actualUsd, baselineUsd, savedUsd, savingsPercent };
+}
+
+export function computeToolLedger(messages: RelayUIMessage[]): ToolLedgerRow[] {
   const rowsByTool: Record<(typeof TRACKED_TOOLS)[number], ToolLedgerRow> = {
     audit_campaign_hygiene: {
       tool: 'audit_campaign_hygiene',
@@ -268,11 +284,8 @@ export function InspectorDrawer({
     };
   });
 
-  const totalCostUsd = telemetryEntries.reduce((s, e) => s + e.costUsd, 0);
-  const totalBaselineCostUsd = telemetryEntries.reduce(
-    (s, e) => s + e.baselineCostUsd,
-    0,
-  );
+  const { actualUsd: totalCostUsd, baselineUsd: totalBaselineCostUsd } =
+    computeSessionSavings(telemetryEntries);
   const toolLedgerRows = computeToolLedger(messages);
 
   const handleCopyAdapter = async () => {
@@ -285,10 +298,15 @@ export function InspectorDrawer({
       helper.style.position = 'fixed';
       helper.style.opacity = '0';
       document.body.appendChild(helper);
-      helper.select();
-      document.execCommand('copy');
-      document.body.removeChild(helper);
-      setCopiedSource(true);
+      try {
+        helper.select();
+        document.execCommand('copy');
+        setCopiedSource(true);
+      } catch {
+        // Ignore fallback clipboard restrictions
+      } finally {
+        document.body.removeChild(helper);
+      }
     }
   };
 

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import { resolveMetadataBase } from '@/lib/share';
 import './globals.css';
 
 const geistSans = Geist({
@@ -15,6 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: resolveMetadataBase(),
   title: 'Fieldstone / Relay Studio',
   description:
     'Option A capability showcase for Fieldstone Relay: Next.js App Router workspace paired with a Python FastAPI and LangGraph agent over AI Gateway and Vercel Sandbox.',

@@ -284,8 +284,9 @@ def get_rows_csv_path(data_dir: Path | None = None) -> Path:
 @lru_cache(maxsize=8)
 def _load_rows_csv_cached(resolved_dir: Path) -> tuple[str, int]:
     csv_path = resolved_dir / "rows.csv"
-    csv_text = csv_path.read_text(encoding="utf-8")
-    reader = csv.reader(io.StringIO(csv_text))
+    with csv_path.open("r", encoding="utf-8", newline="") as csv_file:
+        csv_text = csv_file.read()
+    reader = csv.reader(io.StringIO(csv_text, newline=""))
     header = next(reader, None)
     if header is None or tuple(header) != EXPECTED_CSV_COLUMNS:
         raise ValueError(

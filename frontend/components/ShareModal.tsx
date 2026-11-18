@@ -56,7 +56,9 @@ export function ShareModal({ isOpen, initialSlug, onClose }: ShareModalProps) {
     return null;
   }
 
-  const clampedThreshold = Math.min(100, Math.max(1, Math.round(threshold) || 10));
+  const clampedThreshold = Number.isFinite(threshold)
+    ? Math.min(100, Math.max(1, Math.round(threshold)))
+    : 10;
   const safeChannels: ChannelId[] =
     channels.length > 0 ? channels : ['google_ads'];
 
@@ -95,10 +97,15 @@ export function ShareModal({ isOpen, initialSlug, onClose }: ShareModalProps) {
       helper.style.position = 'fixed';
       helper.style.opacity = '0';
       document.body.appendChild(helper);
-      helper.select();
-      document.execCommand('copy');
-      document.body.removeChild(helper);
-      setCopied(true);
+      try {
+        helper.select();
+        document.execCommand('copy');
+        setCopied(true);
+      } catch {
+        // Ignore fallback clipboard restrictions
+      } finally {
+        document.body.removeChild(helper);
+      }
     }
   };
 

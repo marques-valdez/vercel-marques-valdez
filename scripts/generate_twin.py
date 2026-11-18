@@ -6,6 +6,7 @@ import argparse
 import csv
 import io
 import json
+import math
 import random
 from datetime import date, timedelta
 from pathlib import Path
@@ -242,8 +243,12 @@ def _largest_remainder_cents(
     count = len(weights)
     if count == 0 or total_cents < count * min_cents:
         raise ValueError("Invalid cent allocation parameters.")
-    pool = total_cents - count * min_cents
+    if any(not math.isfinite(w) or w < 0.0 for w in weights):
+        raise ValueError("Invalid cent allocation parameters.")
     weight_sum = sum(weights)
+    if not math.isfinite(weight_sum) or weight_sum <= 0.0:
+        raise ValueError("Invalid cent allocation parameters.")
+    pool = total_cents - count * min_cents
     exact = [pool * (w / weight_sum) for w in weights]
     floors = [int(val) for val in exact]
     remainder = pool - sum(floors)
@@ -421,7 +426,7 @@ def build_twin_artifacts(seed: int = DEFAULT_SEED) -> tuple[str, str]:
                 "totalClicks": total_clicks,
                 "totalConversions": total_convs,
                 "totalPipelineValue": round(cmp_pipe_cents / 100.0, 2),
-                "roas": round(cmp_pipe_cents / cmp_spend_cents, 2),
+                "roas": round(cmp_pipe_cents / cmp_spend_cents, 2) if cmp_spend_cents > 0 else 0.0,
                 "brokenCreatives": len(spec["broken404"]),
                 "utmViolations": len(spec["utmViolations"]),
             }
@@ -467,7 +472,7 @@ def build_twin_artifacts(seed: int = DEFAULT_SEED) -> tuple[str, str]:
                 "spendAtRiskPerDay": round(sum(h["dailySpendAtRisk"] for h in ch_issues), 2),
                 "totalSpend": ch_spend,
                 "totalPipelineValue": ch_pipe,
-                "roas": round(ch_pipe / ch_spend, 2),
+                "roas": round(ch_pipe / ch_spend, 2) if ch_spend > 0.0 else 0.0,
             }
         )
 

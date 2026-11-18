@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "node lib/start-server.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/contracts.test.mjs"
+    "test": "node --test tests/contracts.test.mjs tests/adv_whitebox.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "3.0.303",

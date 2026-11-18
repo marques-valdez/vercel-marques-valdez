@@ -12,6 +12,7 @@ import time
 from typing import Any, AsyncIterator, Final, Literal, Mapping, Sequence
 
 from app.sandbox_runner import (
+    compute_estimated_tokens_avoided,
     reset_request_sandbox_budget,
     restore_request_sandbox_budget,
     run_sandbox_query,
@@ -24,6 +25,7 @@ from app.twin import (
     DerivedTwinState,
     Mutation,
     compute_twin_state,
+    get_rows_csv_text,
     load_base_twin,
 )
 
@@ -521,6 +523,11 @@ async def stream_workflow_dry_run(
         scoped_table = [
             row for row in sandbox_res.table if row.get("channel") in selected_names
         ]
+        scoped_est_avoided = (
+            sandbox_res.estTokensAvoided
+            if len(scoped_table) == len(sandbox_res.table)
+            else compute_estimated_tokens_avoided(get_rows_csv_text(data_dir), scoped_table)
+        )
         yield _format_sse_frame(
             {
                 "stepIndex": 3,
@@ -530,12 +537,12 @@ async def stream_workflow_dry_run(
                 "mode": sandbox_res.mode,
                 "detail": (
                     f"Scanned {sandbox_res.rowsScanned:,} daily rows via {sandbox_res.mode} "
-                    f"({len(scoped_table)} channel summaries, ~{sandbox_res.estTokensAvoided:,} est. tokens avoided)."
+                    f"({len(scoped_table)} channel summaries, ~{scoped_est_avoided:,} est. tokens avoided)."
                 ),
                 "summary": {
                     "rowsScanned": sandbox_res.rowsScanned,
                     "rowsReturned": len(scoped_table),
-                    "estTokensAvoided": sandbox_res.estTokensAvoided,
+                    "estTokensAvoided": scoped_est_avoided,
                     "table": scoped_table,
                 },
             }

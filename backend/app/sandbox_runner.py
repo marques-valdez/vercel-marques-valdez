@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from contextvars import ContextVar, Token
 import csv
 from dataclasses import dataclass
@@ -65,7 +66,8 @@ def restore_request_sandbox_budget(
     token: Token[_RequestSandboxBudget | None],
 ) -> None:
     """Restore a prior ContextVar token on request exit."""
-    _request_sandbox_budget.reset(token)
+    with contextlib.suppress(ValueError):
+        _request_sandbox_budget.reset(token)
 
 
 def get_request_sandbox_count() -> int:
@@ -105,7 +107,7 @@ def run_sqlite_job(
     params: Sequence[Any] = (),
 ) -> dict[str, Any]:
     """Execute parameterized SQLite aggregation over CSV text in stdlib memory."""
-    reader = csv.reader(io.StringIO(csv_text))
+    reader = csv.reader(io.StringIO(csv_text, newline=""))
     header = next(reader, None)
     if header is None or tuple(header) != EXPECTED_CSV_COLUMNS:
         raise ValueError(
@@ -186,16 +188,16 @@ def build_job_script(sql: str, params: Sequence[Any] = ()) -> str:
         "        return 0.0 if val == 0.0 else val\n"
         "    return val\n\n"
         "def main() -> None:\n"
-        "    csv_text = Path('rows.csv').read_text(encoding='utf-8')\n"
-        "    reader = csv.reader(io.StringIO(csv_text))\n"
-        "    header = next(reader, None)\n"
-        "    if header is None or list(header) != SPEC['expectedHeader']:\n"
-        "        raise ValueError(f'Unexpected CSV header: {header!r}')\n"
-        "    records = [\n"
-        "        (r[0], r[1], r[2], r[3], float(r[4]), int(r[5]), int(r[6]), float(r[7]))\n"
-        "        for r in reader\n"
-        "        if r\n"
-        "    ]\n"
+        "    with Path('rows.csv').open('r', encoding='utf-8', newline='') as f:\n"
+        "        reader = csv.reader(f)\n"
+        "        header = next(reader, None)\n"
+        "        if header is None or list(header) != SPEC['expectedHeader']:\n"
+        "            raise ValueError(f'Unexpected CSV header: {header!r}')\n"
+        "        records = [\n"
+        "            (r[0], r[1], r[2], r[3], float(r[4]), int(r[5]), int(r[6]), float(r[7]))\n"
+        "            for r in reader\n"
+        "            if r\n"
+        "        ]\n"
         "    conn = sqlite3.connect(':memory:')\n"
         "    try:\n"
         "        conn.execute(\n"

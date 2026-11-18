@@ -10,14 +10,24 @@ interface SandboxCardProps {
   onRetry: () => void;
 }
 
-function formatCellValue(key: string, value: string | number | boolean | null): string {
+export function formatCellValue(
+  key: string,
+  value: string | number | boolean | null,
+): string {
   if (value === null || value === undefined) {
     return '—';
   }
   if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      return '—';
+    }
+    const clean = Object.is(value, -0) ? 0 : value;
     const lower = key.toLowerCase();
+    if (lower.includes('pct') || lower.includes('percent')) {
+      return `${clean.toFixed(2)}%`;
+    }
     if (lower.includes('roas') || lower.includes('return')) {
-      return `${value.toFixed(2)}x`;
+      return `${clean.toFixed(2)}x`;
     }
     if (
       lower.includes('spend') ||
@@ -27,15 +37,17 @@ function formatCellValue(key: string, value: string | number | boolean | null): 
       lower.includes('cpa') ||
       lower.includes('cpc')
     ) {
-      return `$${value.toLocaleString('en-US', {
-        minimumFractionDigits: value < 100 ? 2 : 0,
+      const sign = clean < 0 ? '-' : '';
+      const abs = Math.abs(clean);
+      return `${sign}$${abs.toLocaleString('en-US', {
+        minimumFractionDigits: abs < 100 ? 2 : 0,
         maximumFractionDigits: 2,
       })}`;
     }
-    if (Number.isInteger(value)) {
-      return value.toLocaleString('en-US');
+    if (Number.isInteger(clean)) {
+      return clean.toLocaleString('en-US');
     }
-    return value.toLocaleString('en-US', {
+    return clean.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
@@ -95,7 +107,10 @@ export function SandboxCard({
   const barMetricColumn =
     columns.find((col) => col.toLowerCase().includes('roas')) ??
     columns.find((col) => col.toLowerCase().includes('pipeline')) ??
-    columns.find((col) => col.toLowerCase().includes('spend')) ??
+    columns.find((col) => {
+      const l = col.toLowerCase();
+      return l.includes('spend') && !l.includes('pct') && !l.includes('percent');
+    }) ??
     columns.find((col) => typeof rows[0]?.[col] === 'number');
 
   const maxBarValue = barMetricColumn

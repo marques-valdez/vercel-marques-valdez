@@ -75,6 +75,8 @@ def contains_lone_surrogate(value: object) -> bool:
 
 def _extract_text_segments(msg: Mapping[str, Any]) -> list[str]:
     parts = msg.get("parts")
+    if parts is not None and not isinstance(parts, list):
+        raise ValueError("Message 'parts' field must be a list")
     if isinstance(parts, list) and len(parts) > 0:
         segments: list[str] = []
         for part in parts:
@@ -124,6 +126,8 @@ def _convert_assistant_message(
     msg_index: int,
 ) -> list[BaseMessage]:
     parts = msg.get("parts")
+    if parts is not None and not isinstance(parts, list):
+        raise ValueError("Assistant message 'parts' field must be a list")
     if not isinstance(parts, list) or len(parts) == 0:
         text = "".join(_extract_text_segments(msg))
         return [AIMessage(content=text)] if text else []
