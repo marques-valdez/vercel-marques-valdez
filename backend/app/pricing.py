@@ -32,6 +32,31 @@ class ModelPrice:
 
 
 PINNED_PRICES_2026_11_17: Final[dict[str, ModelPrice]] = {
+    "nvidia/nemotron-3.5-lightning-free": ModelPrice(
+        input_per_token=0.0,
+        output_per_token=0.0,
+        cache_read_per_token=0.0,
+    ),
+    "reflection/beam-free": ModelPrice(
+        input_per_token=0.0,
+        output_per_token=0.0,
+        cache_read_per_token=0.0,
+    ),
+    "stealth/glyph-cluster": ModelPrice(
+        input_per_token=0.0,
+        output_per_token=0.0,
+        cache_read_per_token=0.0,
+    ),
+    "humansand/ampersand-v0.1": ModelPrice(
+        input_per_token=0.0,
+        output_per_token=0.0,
+        cache_read_per_token=0.0,
+    ),
+    "recursive/flint-v1.0": ModelPrice(
+        input_per_token=0.0,
+        output_per_token=0.0,
+        cache_read_per_token=0.0,
+    ),
     "google/gemini-4-hydrogen": ModelPrice(
         input_per_token=0.0000015,
         output_per_token=0.0000075,

@@ -487,7 +487,9 @@ def test_adv_generator_largest_remainder_rejects_zero_negative_or_nan_weights() 
 # ===========================================================================
 
 
-def test_adv_pricing_edge_rates_free_models_cache_write_and_unknown_fallbacks() -> None:
+def test_adv_pricing_edge_rates_free_models_cache_write_and_unknown_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Cover parse_models_catalog_payload, :free models, cache_write rates, and unknown model tiers."""
     assert parse_models_catalog_payload(None) == {}
     assert parse_models_catalog_payload({"data": "invalid"}) == {}
@@ -500,7 +502,18 @@ def test_adv_pricing_edge_rates_free_models_cache_write_and_unknown_fallbacks() 
         output_tokens=50,
     )
     assert free_cost == 0.0
-    assert free_baseline > 0.0
+    assert free_baseline == 0.0
+
+    monkeypatch.setenv("REASONING_MODELS", "anthropic/claude-sonnet-5.5")
+    _, paid_baseline = compute_turn_costs(
+        served_model="meta-llama/llama-4-scout:free",
+        tier="fast",
+        input_tokens=800,
+        cached_tokens=100,
+        output_tokens=50,
+    )
+    assert paid_baseline > 0.0
+    monkeypatch.delenv("REASONING_MODELS", raising=False)
     assert get_model_price("custom/demo-free").output_per_token == 0.0
 
     assert get_model_price("unknown/fast-v1", fallback_tier="fast") == get_model_price(
@@ -530,6 +543,7 @@ def test_adv_pricing_edge_rates_free_models_cache_write_and_unknown_fallbacks() 
     )
     assert gemini_pro_cost == pytest.approx(1000 * 0.000000125 + 50 * 0.00001)
 
+    monkeypatch.setenv("REASONING_MODELS", "anthropic/claude-sonnet-5.5")
     rep_fast, rep_base = compute_turn_costs(
         served_model="google/gemini-3.1-flash-lite",
         tier="fast",
@@ -1753,6 +1767,7 @@ async def test_adv_iter2_pricing_malformed_rates_and_missing_cache_read_fallback
     )
     assert cost == pytest.approx(1000 * 0.000001 + 100 * 0.000004)
 
+    monkeypatch.setenv("REASONING_MODELS", "anthropic/claude-sonnet-5.5")
     turn_cost, baseline_cost = compute_turn_costs(
         served_model="google/gemini-3.1-flash-lite",
         tier="fast",

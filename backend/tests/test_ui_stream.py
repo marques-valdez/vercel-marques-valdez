@@ -377,14 +377,14 @@ def test_router_tier_hint_keyword_and_env_overrides(
     assert by_card_fast.tier == "fast"
     assert by_card_fast.routed_by == "card"
     assert DEFAULT_FAST_MODELS == (
-        "google/gemini-4-hydrogen",
-        "anthropic/claude-haiku-5.5",
-        "google/gemini-3.1-flash-lite",
+        "nvidia/nemotron-3.5-lightning-free",
+        "reflection/beam-free",
+        "stealth/glyph-cluster",
     )
     assert DEFAULT_REASONING_MODELS == (
-        "google/gemini-4-argon",
-        "anthropic/claude-sonnet-5.5",
-        "google/gemini-3.1-pro-preview",
+        "reflection/beam-free",
+        "humansand/ampersand-v0.1",
+        "recursive/flint-v1.0",
     )
     assert by_card_fast.primary_model == DEFAULT_FAST_MODELS[0]
     assert by_card_fast.fallback_models == DEFAULT_FAST_MODELS[1:]
@@ -422,6 +422,19 @@ async def test_pricing_pinned_and_live_catalog_and_baseline_math(
 ) -> None:
     assert get_pricing_source() == PINNED_PRICING_SOURCE
 
+    # Default free-tier models have $0.00 cost and $0.00 baseline.
+    free_cost, free_baseline = compute_turn_costs(
+        served_model=DEFAULT_FAST_MODELS[0],
+        tier="fast",
+        input_tokens=1000,
+        cached_tokens=200,
+        output_tokens=100,
+    )
+    assert free_cost == 0.0
+    assert free_baseline == 0.0
+
+    # With a paid reasoning baseline override, fast tier saves against it.
+    monkeypatch.setenv("REASONING_MODELS", "anthropic/claude-sonnet-5.5")
     fast_cost, baseline_cost = compute_turn_costs(
         served_model="google/gemini-3.1-flash-lite",
         tier="fast",
@@ -437,6 +450,7 @@ async def test_pricing_pinned_and_live_catalog_and_baseline_math(
         output_tokens=100,
     )
 
+    monkeypatch.setenv("REASONING_MODELS", "google/gemini-4-argon")
     hydrogen_cost, argon_baseline_cost = compute_turn_costs(
         served_model="google/gemini-4-hydrogen",
         tier="fast",
@@ -457,6 +471,7 @@ async def test_pricing_pinned_and_live_catalog_and_baseline_math(
         cached_tokens=200,
         output_tokens=100,
     )
+    monkeypatch.delenv("REASONING_MODELS", raising=False)
 
     reported_cost, reported_baseline = compute_turn_costs(
         served_model=DEFAULT_REASONING_MODELS[0],
@@ -618,7 +633,8 @@ def test_golden_sse_text_only_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     assert telemetry["inputTokens"] == 240
     assert telemetry["cachedTokens"] == 60
     assert telemetry["outputTokens"] == 18
-    assert telemetry["costUsd"] < telemetry["baselineCostUsd"]
+    assert telemetry["costUsd"] == 0.0
+    assert telemetry["baselineCostUsd"] == 0.0
     assert telemetry["latencyMs"] >= 1
     assert all(
         math.isfinite(telemetry[k])

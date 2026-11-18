@@ -227,8 +227,8 @@ Model IDs come from environment variables with these defaults (prices checked ag
 
 | Variable | Default |
 | :-- | :-- |
-| `FAST_MODELS` | `google/gemini-4-hydrogen,anthropic/claude-haiku-5.5,google/gemini-3.1-flash-lite` |
-| `REASONING_MODELS` | `google/gemini-4-argon,anthropic/claude-sonnet-5.5,google/gemini-3.1-pro-preview` |
+| `FAST_MODELS` | `nvidia/nemotron-3.5-lightning-free,reflection/beam-free,stealth/glyph-cluster` |
+| `REASONING_MODELS` | `reflection/beam-free,humansand/ampersand-v0.1,recursive/flint-v1.0` |
 
 The first ID is the primary. The rest are the ordered fallbacks.
 
