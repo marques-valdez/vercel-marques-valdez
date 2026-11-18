@@ -941,14 +941,30 @@ def preview_budget_reallocation(
     state_before = compute_twin_state(validated_mutations, data_dir=data_dir)
     by_id = {c.campaignId: c for c in state_before.campaigns}
 
+    if from_campaign is not None and from_campaign not in by_id:
+        raise ValueError(f"Unknown from_campaign '{from_campaign}'")
+    if to_campaign is not None and to_campaign not in by_id:
+        raise ValueError(f"Unknown to_campaign '{to_campaign}'")
+    if (
+        from_campaign is not None
+        and to_campaign is not None
+        and from_campaign == to_campaign
+    ):
+        raise ValueError("from_campaign and to_campaign must be distinct")
+
     if from_campaign is None:
-        funded = [
+        all_funded = [
             c
             for c in state_before.campaigns
             if budgets_before[c.campaignId] > Decimal("0")
         ]
-        if not funded:
+        if not all_funded:
             raise ValueError("No funded campaign available to reallocate from")
+        funded = [c for c in all_funded if c.campaignId != to_campaign]
+        if not funded:
+            raise ValueError(
+                "No distinct funded source campaign available to reallocate from"
+            )
         source = min(
             funded,
             key=lambda c: (c.roas, -budgets_before[c.campaignId], c.campaignId),
@@ -965,13 +981,6 @@ def preview_budget_reallocation(
             )
         target = max(candidates, key=lambda c: (c.roas, c.campaignId))
         to_campaign = target.campaignId
-
-    if from_campaign not in by_id:
-        raise ValueError(f"Unknown from_campaign '{from_campaign}'")
-    if to_campaign not in by_id:
-        raise ValueError(f"Unknown to_campaign '{to_campaign}'")
-    if from_campaign == to_campaign:
-        raise ValueError("from_campaign and to_campaign must be distinct")
 
     source_camp = by_id[from_campaign]
     target_camp = by_id[to_campaign]

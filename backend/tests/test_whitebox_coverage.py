@@ -1998,3 +1998,160 @@ async def test_adv_iter2_cross_feature_workflow_csv_and_50_mutation_conservation
     )
     assert post.totals.blendedRoas == prev.blendedRoasAfter
 
+
+# ===========================================================================
+# 4. Iteration 3 Regression & Header-Literal Coverage Tests
+# ===========================================================================
+
+
+async def test_adv_iter3_ad_group_efficiency_zero_conversions_only_uses_having_sum(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """zero_conversions_only=True must return only ad groups whose aggregated conversions equal zero."""
+    monkeypatch.setenv("SANDBOX_DISABLED", "1")
+
+    all_ags = await run_sandbox_query(
+        "ad_group_efficiency",
+        {"zero_conversions_only": False, "limit": 50},
+    )
+    expected_zero_ids = [
+        row["ad_group_id"]
+        for row in all_ags.table
+        if row["total_conversions"] == 0
+    ]
+    assert len(expected_zero_ids) == 14
+
+    zero_only = await run_sandbox_query(
+        "ad_group_efficiency",
+        {"zero_conversions_only": True, "limit": 50},
+    )
+    assert zero_only.rowsScanned == 10400
+    assert zero_only.rowsReturned == 14
+    assert [row["ad_group_id"] for row in zero_only.table] == expected_zero_ids
+
+    expected_by_id = {row["ad_group_id"]: row for row in all_ags.table}
+    for row in zero_only.table:
+        assert row == expected_by_id[row["ad_group_id"]]
+        assert row["total_conversions"] == 0
+        assert row["total_pipeline_value"] == 0.0
+        assert row["roas"] == 0.0
+        assert row["cpa"] is None
+
+    for non_ag_tpl in (
+        "channel_roas_summary",
+        "campaign_roas_ranking",
+        "daily_pacing_anomalies",
+    ):
+        with pytest.raises(ValueError, match="zero_conversions_only must be a boolean"):
+            compile_sql_template(non_ag_tpl, {"zero_conversions_only": "yes"})
+
+    synth_dir = tmp_path / "having_vs_where"
+    synth_dir.mkdir()
+    (synth_dir / "rows.csv").write_text(
+        "date,channel,campaign_id,ad_group_id,spend,clicks,conversions,pipeline_value\n"
+        "2026-11-16,Google Ads,cmp_g,ag_mixed,500.00,50,0,0.00\n"
+        "2026-11-17,Google Ads,cmp_g,ag_mixed,100.00,10,2,900.00\n"
+        "2026-11-16,LinkedIn Ads,cmp_l,ag_true_zero,80.00,8,0,0.00\n"
+        "2026-11-17,LinkedIn Ads,cmp_l,ag_true_zero,70.00,7,0,0.00\n",
+        encoding="utf-8",
+    )
+    clear_twin_caches()
+
+    tool_map = {t.name: t for t in build_agent_tools(data_dir=synth_dir)}
+    tool_out = await tool_map["analyze_in_sandbox"].ainvoke(
+        {
+            "template_id": "ad_group_efficiency",
+            "zero_conversions_only": True,
+            "limit": 20,
+        }
+    )
+    assert tool_out["rowsScanned"] == 4
+    assert tool_out["rowsReturned"] == 1
+    assert tool_out["table"] == [
+        {
+            "ad_group_id": "ag_true_zero",
+            "campaign_id": "cmp_l",
+            "channel": "LinkedIn Ads",
+            "total_spend": 150.0,
+            "total_clicks": 15,
+            "total_conversions": 0,
+            "total_pipeline_value": 0.0,
+            "roas": 0.0,
+            "cpa": None,
+        }
+    ]
+    clear_twin_caches()
+
+
+async def test_adv_iter3_preview_reallocation_auto_from_excludes_explicit_to_campaign() -> None:
+    """Omitting from_campaign when to_campaign is the lowest-ROAS campaign must pick a distinct funded source."""
+    preview = preview_budget_reallocation([], to_campaign="cmp_linkedin_01")
+    assert preview.toCampaign == "cmp_linkedin_01"
+    assert preview.fromCampaign != "cmp_linkedin_01"
+    assert preview.fromCampaign == "cmp_meta_03"
+    assert preview.amountPerDay == 125.0
+
+    approved = compute_twin_state(
+        [
+            {
+                "type": "reallocate_budget",
+                "from_campaign": preview.fromCampaign,
+                "to_campaign": preview.toCampaign,
+                "amount_per_day": preview.amountPerDay,
+            }
+        ]
+    )
+    assert approved.totals.dailyBudget == 6167.0
+    assert approved.totals.blendedRoas == preview.blendedRoasAfter
+
+    tool_map = {t.name: t for t in build_agent_tools()}
+    tool_res = await tool_map["propose_budget_reallocation"].ainvoke(
+        {"to_campaign": "LinkedIn Account Targeting — Enterprise Tier"}
+    )
+    assert tool_res["fromCampaign"] == "cmp_meta_03"
+    assert tool_res["toCampaign"] == "cmp_linkedin_01"
+
+    base = compute_twin_state()
+    drain_others = [
+        {
+            "type": "reallocate_budget",
+            "from_campaign": c.campaignId,
+            "to_campaign": "cmp_linkedin_01",
+            "amount_per_day": c.dailyBudget,
+        }
+        for c in base.campaigns
+        if c.campaignId != "cmp_linkedin_01"
+    ]
+    with pytest.raises(ValueError, match="distinct"):
+        preview_budget_reallocation(drain_others, to_campaign="cmp_linkedin_01")
+
+    with pytest.raises(ValueError, match="Unknown to_campaign"):
+        preview_budget_reallocation([], to_campaign="cmp_nonexistent_99")
+
+
+def test_adv_iter3_literal_sse_headers_and_residual_helper_branches() -> None:
+    """Assert literal Stream Protocol v1 header values and cover empty assistant message & Decimal share branches."""
+    from decimal import Decimal
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/agent/chat",
+        json={
+            "messages": [
+                {"role": "user", "content": "Initial prompt"},
+                {"role": "assistant"},
+                {"role": "user", "parts": [], "content": "Follow-up after aborted turn"},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("x-vercel-ai-ui-message-stream") == "v1"
+    assert resp.headers.get("cache-control") == "no-cache"
+    assert (resp.headers.get("content-type") or "").startswith("text/event-stream")
+
+    state = compute_twin_state()
+    assert compute_blended_roas(state.campaigns) == state.totals.blendedRoas
+    dec_prev = preview_budget_reallocation([], default_shift_share=Decimal("0.25"))
+    assert dec_prev.amountPerDay == 350.0
+

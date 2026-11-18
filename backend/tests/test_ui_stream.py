@@ -516,6 +516,7 @@ def test_golden_sse_missing_gateway_credentials(
         assert resp.status_code == 200
         for hdr_key, hdr_val in UI_MESSAGE_STREAM_HEADERS.items():
             assert resp.headers.get(hdr_key) == hdr_val
+        assert resp.headers.get("x-vercel-ai-ui-message-stream") == "v1"
 
         frames, saw_done = _parse_sse_body(resp.text)
         assert saw_done is True
@@ -554,6 +555,7 @@ def test_golden_sse_text_only_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resp.status_code == 200
     for hdr_key, hdr_val in UI_MESSAGE_STREAM_HEADERS.items():
         assert resp.headers.get(hdr_key) == hdr_val
+    assert resp.headers.get("x-vercel-ai-ui-message-stream") == "v1"
 
     frames, saw_done = _parse_sse_body(resp.text)
     assert saw_done is True

@@ -134,8 +134,6 @@ def _validate_limit(value: Any) -> int:
 
 def _build_where_clause(
     raw_params: Mapping[str, Any],
-    *,
-    allow_zero_conversions_filter: bool = False,
 ) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     bound: list[Any] = []
@@ -173,13 +171,6 @@ def _build_where_clause(
         )
         bound.append(days)
 
-    if allow_zero_conversions_filter and raw_params.get("zero_conversions_only") is not None:
-        zero_only = raw_params["zero_conversions_only"]
-        if not isinstance(zero_only, bool):
-            raise ValueError("zero_conversions_only must be a boolean")
-        if zero_only:
-            clauses.append("conversions = 0")
-
     if not clauses:
         return "", bound
     return "WHERE " + " AND ".join(clauses) + "\n", bound
@@ -199,6 +190,10 @@ def compile_sql_template(
     if not isinstance(raw_sort, str) or raw_sort.strip().lower() not in _SORT_DIRECTIONS:
         raise ValueError("sort_order must be 'asc' or 'desc'")
     sort_sql = _SORT_DIRECTIONS[raw_sort.strip().lower()]
+
+    zero_only = raw_params.get("zero_conversions_only")
+    if zero_only is not None and not isinstance(zero_only, bool):
+        raise ValueError("zero_conversions_only must be a boolean")
 
     limit_val = _validate_limit(raw_params.get("limit", DEFAULT_ROW_LIMIT))
 
@@ -293,9 +288,8 @@ def compile_sql_template(
         )
         return CompiledSqlQuery(template_id=resolved_id, sql=sql, params=tuple(bound))
 
-    where_sql, bound = _build_where_clause(
-        raw_params, allow_zero_conversions_filter=True
-    )
+    where_sql, bound = _build_where_clause(raw_params)
+    having_sql = "HAVING SUM(conversions) = 0\n" if zero_only else ""
     bound.append(limit_val)
     sql = (
         "SELECT\n"
@@ -311,6 +305,7 @@ def compile_sql_template(
         "FROM rows\n"
         f"{where_sql}"
         "GROUP BY ad_group_id, campaign_id, channel\n"
+        f"{having_sql}"
         "ORDER BY total_conversions ASC, total_spend DESC, ad_group_id ASC\n"
         "LIMIT ?;"
     )
