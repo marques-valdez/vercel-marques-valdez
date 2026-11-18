@@ -1457,7 +1457,9 @@ async def test_adv_iter2_pricing_concurrent_single_loop_and_multithread_ttl_refr
 ) -> None:
     """Concurrent callers on one or multiple event loops must wait for live pricing without race or deadlock."""
     import concurrent.futures
+    import gc
     import threading
+    import weakref
     import app.pricing as pricing_mod
 
     reset_pricing_cache()
@@ -1544,24 +1546,121 @@ async def test_adv_iter2_pricing_concurrent_single_loop_and_multithread_ttl_refr
 
     monkeypatch.setattr(httpx, "AsyncClient", _ThreadedCatalogClient)
 
-    def _thread_caller() -> list[str]:
+    def _thread_caller() -> tuple[list[str], weakref.ReferenceType[asyncio.AbstractEventLoop]]:
         barrier.wait(timeout=2.0)
 
-        async def _inner() -> list[str]:
-            return list(
+        async def _inner() -> tuple[list[str], weakref.ReferenceType[asyncio.AbstractEventLoop]]:
+            loop_ref = weakref.ref(asyncio.get_running_loop())
+            res = list(
                 await asyncio.wait_for(
                     asyncio.gather(*(ensure_model_prices_loaded() for _ in range(4))),
                     timeout=2.0,
                 )
             )
+            return res, loop_ref
 
         return asyncio.run(_inner())
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         futs = [pool.submit(_thread_caller) for _ in range(4)]
-        thread_results = [fut.result(timeout=4.0) for fut in futs]
+        outcomes = [fut.result(timeout=4.0) for fut in futs]
+    del futs
 
+    thread_results = [res for res, _ in outcomes]
+    loop_refs = [ref for _, ref in outcomes]
     assert thread_results == [["live"] * 4 for _ in range(4)]
+    assert len(loop_refs) == 4
+    gc.collect()
+    assert all(ref() is None for ref in loop_refs)
+    assert len(pricing_mod._loop_locks) == 0
+    reset_pricing_cache()
+
+
+async def test_adv_iter2_pricing_cancelled_fetch_does_not_poison_cache_or_starve_waiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling an in-flight catalog fetch must not stamp _fetched_at or starve queued waiters."""
+    import app.pricing as pricing_mod
+
+    reset_pricing_cache()
+    monkeypatch.delenv("PRICING_OFFLINE", raising=False)
+
+    clock = [2000.0]
+    fetch_count = 0
+    first_in_flight = asyncio.Event()
+    hold_cancelled_attempt = asyncio.Event()
+
+    class _CancelableCatalogClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _CancelableCatalogClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+        async def get(self, url: str) -> httpx.Response:
+            nonlocal fetch_count
+            fetch_count += 1
+            attempt = fetch_count
+            if attempt in (1, 3):
+                first_in_flight.set()
+                await hold_cancelled_attempt.wait()
+            await asyncio.sleep(0)
+            rate = "0.00000031" if attempt == 2 else "0.00000047"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "google/gemini-3.1-flash-lite",
+                            "pricing": {"input": rate, "output": "0.0000012"},
+                        }
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", _CancelableCatalogClient)
+    monkeypatch.setattr(pricing_mod.time, "monotonic", lambda: clock[0])
+
+    task1 = asyncio.create_task(ensure_model_prices_loaded())
+    await asyncio.wait_for(first_in_flight.wait(), timeout=2.0)
+    task2 = asyncio.create_task(ensure_model_prices_loaded())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert len(pricing_mod._loop_locks) == 1
+
+    task1.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task1, timeout=2.0)
+
+    task2_source = await asyncio.wait_for(task2, timeout=2.0)
+    assert fetch_count == 2
+    assert task2_source == "live"
+    assert await ensure_model_prices_loaded() == "live"
+    assert fetch_count == 2
+    assert get_pricing_source() == "live"
+    assert get_model_price("google/gemini-3.1-flash-lite").input_per_token == 0.00000031
+
+    first_in_flight.clear()
+    clock[0] += 3601.0
+    task3 = asyncio.create_task(ensure_model_prices_loaded())
+    await asyncio.wait_for(first_in_flight.wait(), timeout=2.0)
+    task4 = asyncio.create_task(ensure_model_prices_loaded())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    task3.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task3, timeout=2.0)
+
+    task4_source = await asyncio.wait_for(task4, timeout=2.0)
+    assert fetch_count == 4
+    assert task4_source == "live"
+    assert await ensure_model_prices_loaded() == "live"
+    assert fetch_count == 4
+    assert get_model_price("google/gemini-3.1-flash-lite").input_per_token == 0.00000047
     reset_pricing_cache()
 
 

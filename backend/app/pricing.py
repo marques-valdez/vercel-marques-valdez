@@ -70,8 +70,8 @@ PRICING_CACHE_TTL_SECONDS: Final[float] = 3600.0
 _live_prices: dict[str, ModelPrice] | None = None
 _fetched_at: float | None = None
 _state_lock = threading.Lock()
-_loop_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-    weakref.WeakKeyDictionary()
+_loop_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
 )
 
 
@@ -144,10 +144,11 @@ async def ensure_model_prices_loaded() -> PricingSource:
         if _fetched_at is not None and (now - _fetched_at) < PRICING_CACHE_TTL_SECONDS:
             return LIVE_PRICING_SOURCE if _live_prices is not None else PINNED_PRICING_SOURCE
         loop = asyncio.get_running_loop()
-        loop_lock = _loop_locks.get(loop)
+        loop_id = id(loop)
+        loop_lock = _loop_locks.get(loop_id)
         if loop_lock is None:
             loop_lock = asyncio.Lock()
-            _loop_locks[loop] = loop_lock
+            _loop_locks[loop_id] = loop_lock
 
     async with loop_lock:
         now = time.monotonic()
@@ -156,6 +157,7 @@ async def ensure_model_prices_loaded() -> PricingSource:
                 return LIVE_PRICING_SOURCE if _live_prices is not None else PINNED_PRICING_SOURCE
 
         loaded: dict[str, ModelPrice] | None = None
+        fetch_completed = False
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(1.5, connect=0.8)
@@ -163,13 +165,15 @@ async def ensure_model_prices_loaded() -> PricingSource:
                 resp = await client.get(MODELS_ENDPOINT)
                 if resp.status_code == 200:
                     loaded = parse_models_catalog_payload(resp.json()) or None
+            fetch_completed = True
         except Exception:
-            pass
+            fetch_completed = True
         finally:
-            with _state_lock:
-                if loaded is not None:
-                    _live_prices = loaded
-                _fetched_at = time.monotonic()
+            if fetch_completed or loaded is not None:
+                with _state_lock:
+                    if loaded is not None:
+                        _live_prices = loaded
+                    _fetched_at = time.monotonic()
 
     return get_pricing_source()
 
