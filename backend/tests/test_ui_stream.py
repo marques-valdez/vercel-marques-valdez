@@ -376,6 +376,16 @@ def test_router_tier_hint_keyword_and_env_overrides(
     by_card_fast = route_turn("Please reallocate budget immediately", tier_hint="fast")
     assert by_card_fast.tier == "fast"
     assert by_card_fast.routed_by == "card"
+    assert DEFAULT_FAST_MODELS == (
+        "google/gemini-4-hydrogen",
+        "anthropic/claude-haiku-5.5",
+        "google/gemini-3.1-flash-lite",
+    )
+    assert DEFAULT_REASONING_MODELS == (
+        "google/gemini-4-argon",
+        "anthropic/claude-sonnet-5.5",
+        "google/gemini-3.1-pro-preview",
+    )
     assert by_card_fast.primary_model == DEFAULT_FAST_MODELS[0]
     assert by_card_fast.fallback_models == DEFAULT_FAST_MODELS[1:]
     assert by_card_fast.baseline_model == DEFAULT_REASONING_MODELS[0]
@@ -427,8 +437,29 @@ async def test_pricing_pinned_and_live_catalog_and_baseline_math(
         output_tokens=100,
     )
 
+    hydrogen_cost, argon_baseline_cost = compute_turn_costs(
+        served_model="google/gemini-4-hydrogen",
+        tier="fast",
+        input_tokens=1000,
+        cached_tokens=200,
+        output_tokens=100,
+    )
+    assert hydrogen_cost < argon_baseline_cost
+    assert hydrogen_cost == compute_token_cost_usd(
+        "google/gemini-4-hydrogen",
+        input_tokens=1000,
+        cached_tokens=200,
+        output_tokens=100,
+    )
+    assert argon_baseline_cost == compute_token_cost_usd(
+        "google/gemini-4-argon",
+        input_tokens=1000,
+        cached_tokens=200,
+        output_tokens=100,
+    )
+
     reported_cost, reported_baseline = compute_turn_costs(
-        served_model="anthropic/claude-sonnet-5.5",
+        served_model=DEFAULT_REASONING_MODELS[0],
         tier="reasoning",
         input_tokens=500,
         cached_tokens=0,

@@ -54,8 +54,8 @@ Copy `.env.example` to `.env.local` (or run `vercel env pull` on a linked Vercel
 | :--- | :--- | :--- | :--- |
 | `VERCEL_OIDC_TOKEN` | On Vercel | `""` | Short-lived OIDC credential for AI Gateway and Vercel Sandbox |
 | `AI_GATEWAY_API_KEY` | Optional locally | `""` | AI Gateway API key when `VERCEL_OIDC_TOKEN` is not present |
-| `FAST_MODELS` | No | `google/gemini-3.1-flash-lite,anthropic/claude-haiku-5.5,google/gemini-2.5-flash` | Primary + ordered fallback models for fast-tier turns |
-| `REASONING_MODELS` | No | `anthropic/claude-sonnet-5.5,google/gemini-3.1-pro-preview,google/gemini-2.5-pro` | Primary + ordered fallback models for reasoning-tier turns |
+| `FAST_MODELS` | No | `google/gemini-4-hydrogen,anthropic/claude-haiku-5.5,google/gemini-3.1-flash-lite` | Primary + ordered fallback models for fast-tier turns |
+| `REASONING_MODELS` | No | `google/gemini-4-argon,anthropic/claude-sonnet-5.5,google/gemini-3.1-pro-preview` | Primary + ordered fallback models for reasoning-tier turns |
 | `GATEWAY_REPORTING_TAGS` | No | `"0"` | Set to `"1"` to attach `["app:relay-studio-demo"]` reporting tags |
 | `SANDBOX_DISABLED` | No | `"0"` | Set to `"1"` to force the badged in-process Python `sqlite3` fallback |
 

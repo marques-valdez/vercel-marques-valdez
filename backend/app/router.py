@@ -11,15 +11,15 @@ TierName = Literal["fast", "reasoning"]
 RoutedBy = Literal["card", "keyword"]
 
 DEFAULT_FAST_MODELS: Final[tuple[str, ...]] = (
-    "google/gemini-3.1-flash-lite",
+    "google/gemini-4-hydrogen",
     "anthropic/claude-haiku-5.5",
-    "google/gemini-2.5-flash",
+    "google/gemini-3.1-flash-lite",
 )
 
 DEFAULT_REASONING_MODELS: Final[tuple[str, ...]] = (
+    "google/gemini-4-argon",
     "anthropic/claude-sonnet-5.5",
     "google/gemini-3.1-pro-preview",
-    "google/gemini-2.5-pro",
 )
 
 REASONING_KEYWORD_RE: Final[re.Pattern[str]] = re.compile(

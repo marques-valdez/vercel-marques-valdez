@@ -32,6 +32,16 @@ class ModelPrice:
 
 
 PINNED_PRICES_2026_11_17: Final[dict[str, ModelPrice]] = {
+    "google/gemini-4-hydrogen": ModelPrice(
+        input_per_token=0.0000015,
+        output_per_token=0.0000075,
+        cache_read_per_token=0.000000075,
+    ),
+    "google/gemini-4-argon": ModelPrice(
+        input_per_token=0.000002,
+        output_per_token=0.00001,
+        cache_read_per_token=0.0000001,
+    ),
     "google/gemini-3.1-flash-lite": ModelPrice(
         input_per_token=0.00000025,
         output_per_token=0.0000015,

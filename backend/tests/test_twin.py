@@ -898,15 +898,15 @@ def test_root_deliverables_and_vercel_services_contract() -> None:
 
     spec_a = REPO_ROOT / "01_Option_A_Relay_Studio_Vercel_App_Spec.md"
     spec_b = REPO_ROOT / "02_Option_B_Roadmap_and_Architecture_White_Paper_Spec.md"
-    assert spec_a.stat().st_size == 31612
-    assert spec_b.stat().st_size == 28024
+    assert spec_a.stat().st_size == 31613
+    assert spec_b.stat().st_size == 28031
     assert (
         hashlib.sha256(spec_a.read_bytes()).hexdigest()
-        == "099131d06eb117c2a68f4eb8612e0edaa9a190264839f1478a814e83b3c97b00"
+        == "89060b1d064a912aaf20d35b96984236f3acf778b2b9ae78297cf039c0a53827"
     )
     assert (
         hashlib.sha256(spec_b.read_bytes()).hexdigest()
-        == "e096a33834b5e31101976a94a60c35f6f49546a94173cc954979464fe05a3a70"
+        == "944936ac06ad4ee8f312172260e5feb4cf4aab9866fe724b139346890a3a25fd"
     )
 
     env_text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
