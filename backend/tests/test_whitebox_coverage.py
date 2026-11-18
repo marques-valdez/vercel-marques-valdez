@@ -1445,3 +1445,457 @@ async def test_adv_tools_and_twin_synthetic_edge_cases_and_generator_cli(
     assert (cli_out / "rows.csv").read_bytes() == (
         REPO_ROOT / "backend" / "data" / "rows.csv"
     ).read_bytes()
+
+
+# ===========================================================================
+# 3. Concurrency Synchronization & Residual Branch Coverage Tests
+# ===========================================================================
+
+
+async def test_adv_iter2_pricing_concurrent_single_loop_and_multithread_ttl_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent callers on one or multiple event loops must wait for live pricing without race or deadlock."""
+    import concurrent.futures
+    import threading
+    import app.pricing as pricing_mod
+
+    reset_pricing_cache()
+    monkeypatch.delenv("PRICING_OFFLINE", raising=False)
+
+    clock = [1000.0]
+    fetch_count = [0]
+
+    class _YieldingCatalogClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _YieldingCatalogClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+        async def get(self, url: str) -> httpx.Response:
+            fetch_count[0] += 1
+            seq = fetch_count[0]
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            rate = "0.00000012" if seq == 1 else "0.00000064"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "google/gemini-3.1-flash-lite",
+                            "pricing": {"input": rate, "output": "0.0000011"},
+                        }
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", _YieldingCatalogClient)
+    monkeypatch.setattr(pricing_mod.time, "monotonic", lambda: clock[0])
+
+    cold_sources = await asyncio.gather(*(ensure_model_prices_loaded() for _ in range(10)))
+    assert cold_sources == ["live"] * 10
+    assert fetch_count[0] == 1
+    assert get_model_price("google/gemini-3.1-flash-lite").input_per_token == 0.00000012
+
+    clock[0] += 3601.0
+
+    async def _refresh_reader() -> tuple[str, float]:
+        src = await ensure_model_prices_loaded()
+        return src, get_model_price("google/gemini-3.1-flash-lite").input_per_token
+
+    refreshed = await asyncio.gather(*(_refresh_reader() for _ in range(10)))
+    assert fetch_count[0] == 2
+    assert all(src == "live" and rate == 0.00000064 for src, rate in refreshed)
+
+    reset_pricing_cache()
+    monkeypatch.undo()
+    monkeypatch.delenv("PRICING_OFFLINE", raising=False)
+
+    barrier = threading.Barrier(4)
+
+    class _ThreadedCatalogClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _ThreadedCatalogClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+        async def get(self, url: str) -> httpx.Response:
+            await asyncio.sleep(0.03)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "google/gemini-3.1-flash-lite",
+                            "pricing": {"input": "0.00000022", "output": "0.0000011"},
+                        }
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", _ThreadedCatalogClient)
+
+    def _thread_caller() -> list[str]:
+        barrier.wait(timeout=2.0)
+
+        async def _inner() -> list[str]:
+            return list(
+                await asyncio.wait_for(
+                    asyncio.gather(*(ensure_model_prices_loaded() for _ in range(4))),
+                    timeout=2.0,
+                )
+            )
+
+        return asyncio.run(_inner())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futs = [pool.submit(_thread_caller) for _ in range(4)]
+        thread_results = [fut.result(timeout=4.0) for fut in futs]
+
+    assert thread_results == [["live"] * 4 for _ in range(4)]
+    reset_pricing_cache()
+
+
+async def test_adv_iter2_rate_limiter_multithread_and_hostile_xff_safety() -> None:
+    """SlidingWindowRateLimiter must remain thread-safe under concurrent LRU eviction and XFF bursts."""
+    import concurrent.futures
+    import random
+
+    limiter = SlidingWindowRateLimiter(
+        max_requests=20,
+        window_seconds=60.0,
+        max_tracked_ips=16,
+    )
+    prev_si = sys.getswitchinterval()
+    sys.setswitchinterval(0.000005)
+    try:
+        def _worker(tid: int) -> int:
+            rng = random.Random(202600 + tid)
+            now = 100.0
+            allowed_count = 0
+            for _ in range(800):
+                now += rng.uniform(0.0, 0.3)
+                ip = f"198.51.100.{rng.randint(1, 64)}"
+                ok, retry_after = limiter.check(ip, now=now)
+                if ok:
+                    allowed_count += 1
+                else:
+                    assert retry_after >= 1
+            return allowed_count
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futs = [pool.submit(_worker, i) for i in range(8)]
+            counts = [f.result(timeout=5.0) for f in futs]
+    finally:
+        sys.setswitchinterval(prev_si)
+
+    assert sum(counts) > 0
+    assert len(limiter._buckets) <= 16
+
+    reset_rate_limiter()
+    transport = httpx.ASGITransport(app=app)
+    hostile_xff_variants = (
+        {"X-Forwarded-For": " , , 203.0.113.88 , 10.0.0.1"},
+        {"X-Forwarded-For": "203.0.113.88"},
+        {"X-Forwarded-For": "\t , 203.0.113.88 , , "},
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        responses = await asyncio.gather(
+            *[
+                client.post(
+                    "/api/agent/chat",
+                    headers=hostile_xff_variants[idx % len(hostile_xff_variants)],
+                    json={"messages": [{"role": "user", "content": f"Status {idx}"}]},
+                )
+                for idx in range(25)
+            ]
+        )
+    assert sum(1 for r in responses if r.status_code == 200) == 20
+    assert sum(1 for r in responses if r.status_code == 429) == 5
+    reset_rate_limiter()
+
+
+async def test_adv_iter2_pricing_malformed_rates_and_missing_cache_read_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cover non-numeric _parse_rate inputs and live catalog models omitting input_cache_read."""
+    import app.pricing as pricing_mod
+
+    reset_pricing_cache()
+    catalog = parse_models_catalog_payload(
+        {
+            "data": [
+                {"id": "bad/str-rate", "pricing": {"input": "not-a-float", "output": "0.001"}},
+                {"id": "bad/obj-rate", "pricing": {"input": {}, "output": "0.001"}},
+                {
+                    "id": "custom/no-cache-discount",
+                    "pricing": {"input": "0.000001", "output": "0.000004"},
+                },
+            ]
+        }
+    )
+    assert list(catalog.keys()) == ["custom/no-cache-discount"]
+    monkeypatch.setattr(pricing_mod, "_live_prices", catalog)
+
+    cost = compute_token_cost_usd(
+        "custom/no-cache-discount",
+        input_tokens=1000,
+        cached_tokens=400,
+        output_tokens=100,
+    )
+    assert cost == pytest.approx(1000 * 0.000001 + 100 * 0.000004)
+
+    turn_cost, baseline_cost = compute_turn_costs(
+        served_model="google/gemini-3.1-flash-lite",
+        tier="fast",
+        input_tokens=500,
+        output_tokens=50,
+        gateway_reported_cost="not-numeric",
+    )
+    assert turn_cost > 0.0 and baseline_cost > turn_cost
+    reset_pricing_cache()
+    assert get_pricing_source() == PINNED_PRICING_SOURCE
+
+
+async def test_adv_iter2_agent_type_error_tool_and_empty_stream_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cover TypeError with empty message in tools_node, zero-chunk streams, and non-AIMessage chunk conversion."""
+    from langchain_core.messages import HumanMessageChunk
+    import app.agent as agent_mod
+
+    class _ZeroChunkModel(BaseChatModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+
+        @property
+        def _llm_type(self) -> str:
+            return "zero-chunk"
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Runnable[Any, Any]:
+            return self
+
+        def _generate(self, messages: list[BaseMessage], **kwargs: Any) -> ChatResult:
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=""))])
+
+        async def astream(self, input: Any, config: Any = None, **kwargs: Any) -> AsyncIterator[Any]:
+            if False:
+                yield None
+
+    route = route_turn("Status", tier_hint="fast")
+    zero_graph = build_agent_graph(
+        route=route,
+        model_factory=lambda primary, fallbacks: _ZeroChunkModel(),
+    )
+    zero_raw = "".join(
+        [
+            f
+            async for f in stream_langgraph_to_sse(
+                zero_graph,
+                {"messages": [HumanMessage(content="Status")], "model_calls": 0, "pending_telemetry": None},
+            )
+        ]
+    )
+    assert '"type":"data-telemetry"' in zero_raw
+    assert zero_raw.endswith("data: [DONE]\n\n")
+
+    step_box = [0]
+
+    class _HumanChunkAndTypeErrorModel(BaseChatModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+
+        @property
+        def _llm_type(self) -> str:
+            return "human-chunk-typeerror"
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Runnable[Any, Any]:
+            return self
+
+        def _generate(self, messages: list[BaseMessage], **kwargs: Any) -> ChatResult:
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="ok"))])
+
+        async def astream(self, input: Any, config: Any = None, **kwargs: Any) -> AsyncIterator[Any]:
+            idx = step_box[0]
+            step_box[0] += 1
+            if idx == 0:
+                yield AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "audit_campaign_hygiene", "args": {}, "id": "call_te_1", "type": "tool_call"}
+                    ],
+                )
+            else:
+                yield HumanMessageChunk(content="Ignored non-AI chunk.")
+                yield AIMessageChunk(content="Converted chunk reply.")
+
+    class _RaisingTool:
+        name = "audit_campaign_hygiene"
+
+        async def ainvoke(self, input_data: dict[str, Any]) -> Any:
+            raise TypeError("")
+
+    monkeypatch.setattr(agent_mod, "build_agent_tools", lambda *a, **kw: [_RaisingTool()])
+    monkeypatch.setattr(
+        agent_mod,
+        "message_chunk_to_message",
+        lambda chunk: HumanMessage(content=str(chunk.content)),
+    )
+    te_graph = build_agent_graph(
+        route=route,
+        model_factory=lambda primary, fallbacks: _HumanChunkAndTypeErrorModel(),
+    )
+    te_frames = [
+        json.loads(f[6:].strip())
+        async for f in stream_langgraph_to_sse(
+            te_graph,
+            {"messages": [HumanMessage(content="Check")], "model_calls": 0, "pending_telemetry": None},
+        )
+        if f.startswith("data: {")
+    ]
+    err_part = next(f for f in te_frames if f["type"] == "tool-output-error")
+    assert err_part["errorText"] == "Tool audit_campaign_hygiene failed"
+    assert any(
+        f["type"] == "text-delta" and f["delta"] == "Converted chunk reply."
+        for f in te_frames
+    )
+
+
+async def test_adv_iter2_main_pydantic_validation_recursion_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cover RecursionError fallback in handle_pydantic_validation_error."""
+    import app.main as main_mod
+
+    real_ve = ValidationError.from_exception_data("TwinStateRequest", [])
+    monkeypatch.setattr(
+        main_mod,
+        "jsonable_encoder",
+        lambda *a, **kw: (_ for _ in ()).throw(RecursionError("synthetic recursion overflow")),
+    )
+    scope = {"type": "http", "method": "POST", "path": "/api/agent/twin/state", "headers": []}
+    resp = await handle_pydantic_validation_error(Request(scope), real_ve)
+    assert resp.status_code == 422
+    assert b"Input nesting depth exceeded validation limit" in resp.body
+
+
+async def test_adv_iter2_cross_feature_workflow_csv_and_50_mutation_conservation(
+    tmp_path: Path,
+) -> None:
+    """Cross-verify 2-channel workflow estTokensAvoided after mutations, CRLF/CR CSV parity, and 50-step Fraction conservation."""
+    from decimal import Decimal
+    from fractions import Fraction
+    import random
+    from app.sql_templates import TEMPLATE_IDS
+    from app.twin import get_row_count, load_base_twin
+
+    muts = [
+        {"type": "pause_broken_creatives"},
+        {
+            "type": "reallocate_budget",
+            "from_campaign": "cmp_linkedin_01",
+            "to_campaign": "cmp_google_01",
+            "amount_per_day": 1400.0,
+        },
+    ]
+    frames = [
+        json.loads(raw[6:].strip())
+        async for raw in stream_workflow_dry_run(
+            workflow={"template": "cross-channel-roas", "channels": ["Meta Ads", "google"], "threshold": 15},
+            mutations=muts,
+        )
+        if raw.startswith("data: {")
+    ]
+    assert len(frames) == 6
+    step3 = frames[3]["summary"]
+    assert step3["rowsReturned"] == 2
+    assert step3["estTokensAvoided"] == compute_estimated_tokens_avoided(
+        get_rows_csv_text(), step3["table"]
+    )
+    assert round(
+        frames[1]["summary"]["spendAtRiskPerDay"] + frames[2]["summary"]["spendAtRiskPerDay"], 2
+    ) == frames[5]["summary"]["spendAtRiskPerDay"]
+
+    csv_dir = tmp_path / "crlf_quotes"
+    csv_dir.mkdir()
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n", quoting=csv.QUOTE_ALL)
+    writer.writerow(
+        ["date", "channel", "campaign_id", "ad_group_id", "spend", "clicks", "conversions", "pipeline_value"]
+    )
+    writer.writerow(["2026-11-16", "Google Ads", 'cmp_"q",1\r\n2', "ag_cr\r_lf\n", "150.00", "30", "3", "750.00"])
+    writer.writerow(["2026-11-17", "Meta Ads", "cmp_\u2028_m", 'ag_""x""', "50.00", "10", "0", "0.00"])
+    raw_bytes = buf.getvalue().encode("utf-8")
+    (csv_dir / "rows.csv").write_bytes(raw_bytes)
+    clear_twin_caches()
+
+    csv_text = get_rows_csv_text(csv_dir)
+    assert csv_text.encode("utf-8") == raw_bytes
+    assert get_row_count(csv_dir) == 2
+    for tpl_id in TEMPLATE_IDS:
+        compiled = compile_sql_template(tpl_id)
+        in_proc = run_sqlite_job(csv_text, compiled.sql, compiled.params)
+        job_file = csv_dir / f"job_{tpl_id}.py"
+        job_file.write_text(build_job_script(compiled.sql, compiled.params), encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, "-I", "-B", job_file.name],
+            cwd=csv_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert in_proc == json.loads(proc.stdout)
+    clear_twin_caches()
+
+    base = load_base_twin()
+    expected = {c.campaignId: Fraction(Decimal(str(c.dailyBudget))) for c in base.campaigns}
+    total_frac = sum(expected.values())
+    camp_ids = [c.campaignId for c in base.campaigns]
+    rng = random.Random(2026111899)
+    quantum = Fraction(1, 1_000_000)
+    chain: list[dict[str, Any]] = []
+    for _ in range(50):
+        funded = [cid for cid, bal in expected.items() if bal >= quantum]
+        src = rng.choice(funded)
+        dst = rng.choice([cid for cid in camp_ids if cid != src])
+        avail_micro = int(expected[src] / quantum)
+        shift_micro = 1 if rng.random() < 0.3 else rng.randint(1, avail_micro)
+        chain.append(
+            {
+                "type": "reallocate_budget",
+                "from_campaign": src,
+                "to_campaign": dst,
+                "amount_per_day": round(shift_micro / 1_000_000, 6),
+            }
+        )
+        delta = Fraction(shift_micro, 1_000_000)
+        expected[src] -= delta
+        expected[dst] += delta
+
+    derived = compute_twin_state(chain)
+    assert derived.totals.appliedMutations == 50
+    assert Fraction(Decimal(str(derived.totals.dailyBudget))) == total_frac
+    for camp in derived.campaigns:
+        assert Fraction(Decimal(str(camp.dailyBudget))) == expected[camp.campaignId]
+
+    prev = preview_budget_reallocation(chain[:49])
+    post = compute_twin_state(
+        chain[:49]
+        + [
+            {
+                "type": "reallocate_budget",
+                "from_campaign": prev.fromCampaign,
+                "to_campaign": prev.toCampaign,
+                "amount_per_day": prev.amountPerDay,
+            }
+        ]
+    )
+    assert post.totals.blendedRoas == prev.blendedRoasAfter
+

@@ -7,6 +7,7 @@ import math
 import os
 import platform
 import re
+import threading
 import time
 from typing import Any, AsyncIterator, Final, Literal, Mapping, Self
 
@@ -118,44 +119,47 @@ class SlidingWindowRateLimiter:
         self.window_seconds = window_seconds
         self.max_tracked_ips = max_tracked_ips
         self._buckets: OrderedDict[str, deque[float]] = OrderedDict()
+        self._lock = threading.Lock()
 
     def check(self, client_ip: str, *, now: float | None = None) -> tuple[bool, int]:
-        ts = time.monotonic() if now is None else now
-        cutoff = ts - self.window_seconds
+        with self._lock:
+            ts = time.monotonic() if now is None else now
+            cutoff = ts - self.window_seconds
 
-        bucket = self._buckets.get(client_ip)
-        if bucket is not None:
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
-            if not bucket:
-                del self._buckets[client_ip]
-                bucket = None
+            bucket = self._buckets.get(client_ip)
+            if bucket is not None:
+                while bucket and bucket[0] <= cutoff:
+                    bucket.popleft()
+                if not bucket:
+                    del self._buckets[client_ip]
+                    bucket = None
 
-        if bucket is None:
-            if len(self._buckets) >= self.max_tracked_ips:
-                expired = [
-                    key
-                    for key, q in self._buckets.items()
-                    if not q or q[-1] <= cutoff
-                ]
-                for key in expired:
-                    del self._buckets[key]
-                while len(self._buckets) >= self.max_tracked_ips:
-                    self._buckets.popitem(last=False)
-            bucket = deque()
-            self._buckets[client_ip] = bucket
-        else:
-            self._buckets.move_to_end(client_ip)
+            if bucket is None:
+                if len(self._buckets) >= self.max_tracked_ips:
+                    expired = [
+                        key
+                        for key, q in self._buckets.items()
+                        if not q or q[-1] <= cutoff
+                    ]
+                    for key in expired:
+                        del self._buckets[key]
+                    while len(self._buckets) >= self.max_tracked_ips:
+                        self._buckets.popitem(last=False)
+                bucket = deque()
+                self._buckets[client_ip] = bucket
+            else:
+                self._buckets.move_to_end(client_ip)
 
-        if len(bucket) >= self.max_requests:
-            retry_after = max(1, math.ceil(bucket[0] + self.window_seconds - ts))
-            return False, retry_after
+            if len(bucket) >= self.max_requests:
+                retry_after = max(1, math.ceil(bucket[0] + self.window_seconds - ts))
+                return False, retry_after
 
-        bucket.append(ts)
-        return True, 0
+            bucket.append(ts)
+            return True, 0
 
     def reset(self) -> None:
-        self._buckets.clear()
+        with self._lock:
+            self._buckets.clear()
 
 
 _chat_rate_limiter = SlidingWindowRateLimiter()

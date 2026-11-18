@@ -6,8 +6,10 @@ import asyncio
 from dataclasses import dataclass
 import math
 import os
+import threading
 import time
 from typing import Any, Final, Literal, Mapping
+import weakref
 
 import httpx
 
@@ -67,7 +69,10 @@ PINNED_PRICES_2026_11_17: Final[dict[str, ModelPrice]] = {
 PRICING_CACHE_TTL_SECONDS: Final[float] = 3600.0
 _live_prices: dict[str, ModelPrice] | None = None
 _fetched_at: float | None = None
-_fetch_lock = asyncio.Lock()
+_state_lock = threading.Lock()
+_loop_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _parse_rate(raw: Any) -> float | None:
@@ -115,41 +120,57 @@ def parse_models_catalog_payload(payload: Any) -> dict[str, ModelPrice]:
 
 def get_pricing_source() -> PricingSource:
     """Return active pricing source synchronously without blocking health checks."""
-    return LIVE_PRICING_SOURCE if _live_prices is not None else PINNED_PRICING_SOURCE
+    with _state_lock:
+        return LIVE_PRICING_SOURCE if _live_prices is not None else PINNED_PRICING_SOURCE
 
 
 def reset_pricing_cache() -> None:
     """Reset module-memory pricing state (used in isolated unit tests)."""
     global _live_prices, _fetched_at
-    _live_prices = None
-    _fetched_at = None
+    with _state_lock:
+        _live_prices = None
+        _fetched_at = None
+        _loop_locks.clear()
 
 
 async def ensure_model_prices_loaded() -> PricingSource:
     """Fetch AI Gateway /v1/models with TTL caching, falling back to pinned 2026-11-17 rates."""
     global _live_prices, _fetched_at
-    now = time.monotonic()
-    if _fetched_at is not None and (now - _fetched_at) < PRICING_CACHE_TTL_SECONDS:
-        return get_pricing_source()
     if os.getenv("PRICING_OFFLINE", "").strip().lower() in {"1", "true", "yes"}:
         return get_pricing_source()
 
-    async with _fetch_lock:
-        now = time.monotonic()
+    now = time.monotonic()
+    with _state_lock:
         if _fetched_at is not None and (now - _fetched_at) < PRICING_CACHE_TTL_SECONDS:
-            return get_pricing_source()
-        _fetched_at = now
+            return LIVE_PRICING_SOURCE if _live_prices is not None else PINNED_PRICING_SOURCE
+        loop = asyncio.get_running_loop()
+        loop_lock = _loop_locks.get(loop)
+        if loop_lock is None:
+            loop_lock = asyncio.Lock()
+            _loop_locks[loop] = loop_lock
+
+    async with loop_lock:
+        now = time.monotonic()
+        with _state_lock:
+            if _fetched_at is not None and (now - _fetched_at) < PRICING_CACHE_TTL_SECONDS:
+                return LIVE_PRICING_SOURCE if _live_prices is not None else PINNED_PRICING_SOURCE
+
+        loaded: dict[str, ModelPrice] | None = None
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(1.5, connect=0.8)
             ) as client:
                 resp = await client.get(MODELS_ENDPOINT)
                 if resp.status_code == 200:
-                    loaded = parse_models_catalog_payload(resp.json())
-                    if loaded:
-                        _live_prices = loaded
+                    loaded = parse_models_catalog_payload(resp.json()) or None
         except Exception:
             pass
+        finally:
+            with _state_lock:
+                if loaded is not None:
+                    _live_prices = loaded
+                _fetched_at = time.monotonic()
+
     return get_pricing_source()
 
 
@@ -160,8 +181,10 @@ def get_model_price(
 ) -> ModelPrice:
     """Look up per-token rates from live catalog, pinned table, or tier primary fallback."""
     cleaned = (model_id or "").strip()
-    if _live_prices is not None and cleaned in _live_prices:
-        return _live_prices[cleaned]
+    with _state_lock:
+        live_prices = _live_prices
+    if live_prices is not None and cleaned in live_prices:
+        return live_prices[cleaned]
     if cleaned in PINNED_PRICES_2026_11_17:
         return PINNED_PRICES_2026_11_17[cleaned]
     if cleaned.endswith(":free") or cleaned.endswith("-free"):
