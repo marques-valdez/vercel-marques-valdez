@@ -1,0 +1,45 @@
+# Python virtual environments & caches
+.venv
+venv
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+*.egg-info
+dist/
+build/
+
+# Node.js & Next.js build artifacts
+node_modules
+.next
+out/
+*.tsbuildinfo
+
+# Local environment secrets & Vercel CLI linkage
+.env
+.env.local
+.env.*.local
+.env.development
+.env.preview
+.env.production
+!.env.example
+.vercel
+
+# Ephemeral local databases, test outputs & OS metadata
+*.db
+*.sqlite
+*.sqlite3
+playwright-report
+test-results
+.DS_Store
+Thumbs.db
+
+# Explicitly keep committed Digital Twin artifacts and lockfiles tracked
+!backend/data/twin.json
+!backend/data/rows.csv
+!backend/uv.lock
+!frontend/package-lock.json
