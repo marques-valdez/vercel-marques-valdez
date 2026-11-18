@@ -7,16 +7,12 @@ import { resolvePlaybookSlug } from '@/lib/share';
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
 
-  let targetSlug = 'creative-404-guard';
-  if (searchParams.has('slug')) {
-    const allValues = searchParams.getAll('slug');
-    if (allValues.length !== 1) {
-      return new Response('Playbook not found', { status: 404 });
-    }
-    targetSlug = allValues[0];
+  const allValues = searchParams.getAll('slug');
+  if (allValues.length !== 1) {
+    return new Response('Playbook not found', { status: 404 });
   }
 
-  const resolved = resolvePlaybookSlug(targetSlug);
+  const resolved = resolvePlaybookSlug(allValues[0]);
   if (!resolved) {
     return new Response('Playbook not found', { status: 404 });
   }

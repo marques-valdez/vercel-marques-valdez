@@ -32,6 +32,7 @@ function loadTsModule(relPath) {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022,
+      jsx: fullPath.endsWith('.tsx') ? ts.JsxEmit.ReactJSX : undefined,
       esModuleInterop: true,
     },
     fileName: fullPath,
@@ -479,12 +480,39 @@ test('start-server.mjs proxies /api/agent/* in memory with SSE streaming, 502 er
     const malformedHexRes = await fetch(
       `http://127.0.0.1:${proxyPort}/p/%FF`,
     );
-    assert.equal(malformedHexRes.status, 400);
+    assert.equal(malformedHexRes.status, 404);
+    assert.equal(malformedHexRes.headers.get('cache-control'), 'no-store');
+    assert.equal(await malformedHexRes.text(), 'Playbook not found');
 
     const truncatedUtf8Res = await fetch(
       `http://127.0.0.1:${proxyPort}/p/%E0%A4%A`,
     );
-    assert.equal(truncatedUtf8Res.status, 400);
+    assert.equal(truncatedUtf8Res.status, 404);
+    assert.equal(await truncatedUtf8Res.text(), 'Playbook not found');
+
+    const malformedSlugRes = await fetch(
+      `http://127.0.0.1:${proxyPort}/p/%%%invalid$$$slug===`,
+    );
+    assert.equal(malformedSlugRes.status, 404);
+    assert.equal(await malformedSlugRes.text(), 'Playbook not found');
+
+    const doubleSlashSlugRes = await fetch(
+      `http://127.0.0.1:${proxyPort}//p/%FF`,
+    );
+    assert.equal(doubleSlashSlugRes.status, 404);
+    assert.equal(await doubleSlashSlugRes.text(), 'Playbook not found');
+
+    const rootMalformedRes = await fetch(
+      `http://127.0.0.1:${proxyPort}/%FF`,
+    );
+    assert.equal(rootMalformedRes.status, 400);
+    assert.equal(await rootMalformedRes.text(), 'Bad Request');
+
+    const agentMalformedRes = await fetch(
+      `http://127.0.0.1:${proxyPort}/api/agent/%FF`,
+    );
+    assert.equal(agentMalformedRes.status, 400);
+    assert.equal(await agentMalformedRes.text(), 'Bad Request');
 
     const rejectedHandlerRes = await fetch(
       `http://127.0.0.1:${proxyPort}/boom`,
@@ -566,12 +594,50 @@ test('start-server.mjs proxies /api/agent/* in memory with SSE streaming, 502 er
       });
 
       const liveBadHex = await fetch(`http://127.0.0.1:${livePort}/p/%FF`);
-      assert.equal(liveBadHex.status, 400);
+      assert.equal(liveBadHex.status, 404);
 
       const liveTruncated = await fetch(
         `http://127.0.0.1:${livePort}/p/%E0%A4%A`,
       );
-      assert.equal(liveTruncated.status, 400);
+      assert.equal(liveTruncated.status, 404);
+
+      const liveMalformedSlug = await fetch(
+        `http://127.0.0.1:${livePort}/p/%%%invalid$$$slug===`,
+      );
+      assert.equal(liveMalformedSlug.status, 404);
+
+      const liveRootMalformed = await fetch(
+        `http://127.0.0.1:${livePort}/%FF`,
+      );
+      assert.equal(liveRootMalformed.status, 400);
+
+      const liveAgentMalformed = await fetch(
+        `http://127.0.0.1:${livePort}/api/agent/%FF`,
+      );
+      assert.equal(liveAgentMalformed.status, 400);
+
+      const liveOgMissingSlug = await fetch(
+        `http://127.0.0.1:${livePort}/api/og`,
+      );
+      assert.equal(liveOgMissingSlug.status, 404);
+
+      const liveOgEmptySlug = await fetch(
+        `http://127.0.0.1:${livePort}/api/og?slug=`,
+      );
+      assert.equal(liveOgEmptySlug.status, 404);
+
+      const liveOgDuplicateSlug = await fetch(
+        `http://127.0.0.1:${livePort}/api/og?slug=creative-404-guard&slug=cross-channel-roas`,
+      );
+      assert.equal(liveOgDuplicateSlug.status, 404);
+
+      const liveOgValid = await fetch(
+        `http://127.0.0.1:${livePort}/api/og?slug=creative-404-guard`,
+      );
+      assert.equal(liveOgValid.status, 200);
+      assert.ok(
+        (liveOgValid.headers.get('content-type') || '').includes('image/png'),
+      );
 
       assert.equal(stderrLog.trim(), '');
     } finally {
@@ -606,4 +672,78 @@ test('loadUiStreamSource returns non-empty Python string from disk or fallback',
   const source = uiStreamSourceMod.loadUiStreamSource();
   assert.equal(typeof source, 'string');
   assert.ok(source.length > 0);
+});
+
+test('ReallocationCard and WorkspaceClient isolate approval decisions per toolCallId across repeated proposalIds', () => {
+  const React = requireFromFrontend('react');
+  const ReactDOMServer = requireFromFrontend('react-dom/server');
+  const { ReallocationCard } = loadTsModule('components/ReallocationCard.tsx');
+
+  const sharedOutput = {
+    proposalId: 'prop_repeat_check',
+    fromCampaign: 'cmp_social_low',
+    fromCampaignName: 'Paid Social Broad',
+    fromChannel: 'LinkedIn Ads',
+    toCampaign: 'cmp_search_high',
+    toCampaignName: 'Search Exact Core',
+    toChannel: 'Google Ads',
+    amountPerDay: 250,
+    before: {
+      fromDailyBudget: 800,
+      toDailyBudget: 500,
+      fromRoas: 1.5,
+      toRoas: 4.5,
+      totalDailyBudget: 2500,
+    },
+    after: {
+      fromDailyBudget: 550,
+      toDailyBudget: 750,
+      fromRoas: 1.5,
+      toRoas: 4.5,
+      totalDailyBudget: 2500,
+    },
+    blendedRoasBefore: 3.1,
+    blendedRoasAfter: 3.4,
+  };
+
+  const decisionsByToolCallId = { call_first: 'declined' };
+
+  const firstCardHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, {
+      state: 'completed',
+      output: sharedOutput,
+      decision: decisionsByToolCallId.call_first ?? null,
+      disabled: false,
+      onApprove: async () => {},
+      onDecline: () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(firstCardHtml.includes('Declined · budgets unchanged'), true);
+  assert.equal(firstCardHtml.includes('reallocation-approve-button'), false);
+
+  const secondCardHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, {
+      state: 'completed',
+      output: sharedOutput,
+      decision: decisionsByToolCallId.call_second ?? null,
+      disabled: false,
+      onApprove: async () => {},
+      onDecline: () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(secondCardHtml.includes('reallocation-approve-button'), true);
+  assert.equal(secondCardHtml.includes('reallocation-decline-button'), true);
+
+  const workspaceSource = fs.readFileSync(
+    path.join(frontendRoot, 'components', 'WorkspaceClient.tsx'),
+    'utf8',
+  );
+  const toolCallIdLookups =
+    workspaceSource.match(/proposalDecisions\[part\.toolCallId\]/g) ?? [];
+  assert.equal(toolCallIdLookups.length, 2);
+  assert.equal(workspaceSource.includes('proposalDecisions[output.proposalId]'), false);
+  assert.equal(workspaceSource.includes('proposalDecisions[out.proposalId]'), false);
+  assert.equal(workspaceSource.includes('[proposal.proposalId]:'), false);
 });

@@ -281,7 +281,7 @@ export function WorkspaceClient({
   }, []);
 
   const handleApproveReallocation = useCallback(
-    async (proposal: ReallocationToolOutput) => {
+    async (proposal: ReallocationToolOutput, decisionKey: string) => {
       const { mutations, state } = await appendTwinMutations([
         {
           type: 'reallocate_budget',
@@ -294,7 +294,7 @@ export function WorkspaceClient({
       setTwinError(null);
       setProposalDecisions((prev) => ({
         ...prev,
-        [proposal.proposalId]: 'approved',
+        [decisionKey]: 'approved',
       }));
       clearError();
       const approvalText = `Approved proposal ${proposal.proposalId}.`;
@@ -315,10 +315,10 @@ export function WorkspaceClient({
   );
 
   const handleDeclineReallocation = useCallback(
-    (proposal: ReallocationToolOutput) => {
+    (proposal: ReallocationToolOutput, decisionKey: string) => {
       setProposalDecisions((prev) => ({
         ...prev,
-        [proposal.proposalId]: 'declined',
+        [decisionKey]: 'declined',
       }));
       clearError();
       const declineText = `Declined proposal ${proposal.proposalId}.`;
@@ -416,7 +416,7 @@ export function WorkspaceClient({
       case 'tool-propose_budget_reallocation': {
         const cardState = mapToolStateToCardState(part.state);
         const output = part.state === 'output-available' ? part.output : undefined;
-        const decision = output ? proposalDecisions[output.proposalId] ?? null : null;
+        const decision = proposalDecisions[part.toolCallId] ?? null;
         return (
           <ReallocationCard
             key={part.toolCallId}
@@ -425,8 +425,12 @@ export function WorkspaceClient({
             errorText={part.state === 'output-error' ? part.errorText : undefined}
             decision={decision}
             disabled={isStreaming}
-            onApprove={handleApproveReallocation}
-            onDecline={handleDeclineReallocation}
+            onApprove={(proposal) =>
+              handleApproveReallocation(proposal, part.toolCallId)
+            }
+            onDecline={(proposal) =>
+              handleDeclineReallocation(proposal, part.toolCallId)
+            }
             onRetry={handleRetry}
           />
         );
@@ -486,7 +490,7 @@ export function WorkspaceClient({
             part.state === 'output-available'
               ? (part.output as ReallocationToolOutput)
               : undefined;
-          const decision = out ? proposalDecisions[out.proposalId] ?? null : null;
+          const decision = proposalDecisions[part.toolCallId] ?? null;
           return (
             <ReallocationCard
               key={part.toolCallId}
@@ -495,8 +499,12 @@ export function WorkspaceClient({
               errorText={errText}
               decision={decision}
               disabled={isStreaming}
-              onApprove={handleApproveReallocation}
-              onDecline={handleDeclineReallocation}
+              onApprove={(proposal) =>
+                handleApproveReallocation(proposal, part.toolCallId)
+              }
+              onDecline={(proposal) =>
+                handleDeclineReallocation(proposal, part.toolCallId)
+              }
               onRetry={handleRetry}
             />
           );

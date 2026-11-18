@@ -153,6 +153,15 @@ export function createFrontendRequestListener({ handle, env = process.env }) {
     try {
       decodeURIComponent(rawPathname);
     } catch {
+      const normalizedPath = rawPathname.replace(/^\/+/, '/');
+      if (normalizedPath.startsWith('/p/') && normalizedPath.length > 3) {
+        res.writeHead(404, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end('Playbook not found');
+        return;
+      }
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Bad Request');
       return;
