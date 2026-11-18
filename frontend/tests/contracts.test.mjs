@@ -747,3 +747,29 @@ test('ReallocationCard and WorkspaceClient isolate approval decisions per toolCa
   assert.equal(workspaceSource.includes('proposalDecisions[out.proposalId]'), false);
   assert.equal(workspaceSource.includes('[proposal.proposalId]:'), false);
 });
+
+test('MarkdownText renders headings, lists, inline formatting, and blocks unsafe hrefs', () => {
+  const React = requireFromFrontend('react');
+  const ReactDOMServer = requireFromFrontend('react-dom/server');
+  const { MarkdownText } = loadTsModule('components/MarkdownText.tsx');
+  const sample = [
+    '#### Google Ads (5 campaigns)',
+    '- **Broken 404s:** 4 creatives across *cmp_google_02* (`utm_source=google`)',
+    '',
+    '### Immediate Recommendations',
+    '1. **Pause broken ads** and see [Playbook](/p/creative-404-guard) or [Bad](javascript:alert(1)).',
+  ].join('\n');
+
+  const html = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(MarkdownText, { text: sample }),
+  );
+  assert.equal(html.includes('<h4 class="md-h4">Google Ads (5 campaigns)</h4>'), true);
+  assert.equal(html.includes('<h3 class="md-h3">Immediate Recommendations</h3>'), true);
+  assert.equal(html.includes('<strong>Broken 404s:</strong>'), true);
+  assert.equal(html.includes('<em>cmp_google_02</em>'), true);
+  assert.equal(html.includes('<code class="md-inline-code">utm_source=google</code>'), true);
+  assert.equal(html.includes('<ul class="md-list">'), true);
+  assert.equal(html.includes('<ol class="md-list md-list-ordered">'), true);
+  assert.equal(html.includes('href="/p/creative-404-guard"'), true);
+  assert.equal(html.includes('javascript:'), false);
+});

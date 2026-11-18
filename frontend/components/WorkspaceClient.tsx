@@ -14,6 +14,7 @@ import { SandboxCard } from './SandboxCard';
 import { ShareModal } from './ShareModal';
 import { TelemetryStrip } from './TelemetryStrip';
 import { WorkflowCard } from './WorkflowCard';
+import { MarkdownText } from './MarkdownText';
 import {
   appendTwinMutations,
   fetchTwinState,
@@ -374,11 +375,7 @@ export function WorkspaceClient({
         if (!part.text.trim()) {
           return null;
         }
-        return (
-          <div key={`text-${index}`} className="assistant-prose">
-            {part.text}
-          </div>
-        );
+        return <MarkdownText key={`text-${index}`} text={part.text} />;
       }
 
       case 'data-telemetry':
