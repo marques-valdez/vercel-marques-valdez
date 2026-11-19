@@ -105,6 +105,8 @@ export interface HealthStatus {
   commitSha: string;
   pricingSource: string;
   sandboxAvailable: boolean;
+  databaseConnected?: boolean;
+  databaseProvider?: 'neon-postgres' | 'browser-local';
   fastModels?: string[];
   reasoningModels?: string[];
   baselineModel?: string;

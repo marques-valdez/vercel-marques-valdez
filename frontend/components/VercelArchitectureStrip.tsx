@@ -77,6 +77,7 @@ export function VercelArchitectureStrip({
     : 'In-process SQLite';
   const pricingLabel =
     health?.pricingSource === 'live' ? 'Live pricing' : 'Pinned pricing';
+  const dbLabel = health?.databaseConnected ? 'Neon Postgres' : 'Browser local';
 
   return (
     <section
@@ -120,7 +121,7 @@ export function VercelArchitectureStrip({
             |
           </span>
           <span className="arch-meta mono-text">
-            {`Sandbox: ${sandboxLabel} · ${pricingLabel}`}
+            {`Sandbox: ${sandboxLabel} · DB: ${dbLabel} · ${pricingLabel}`}
           </span>
         </div>
 

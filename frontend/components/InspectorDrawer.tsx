@@ -655,6 +655,16 @@ export function InspectorDrawer({
                   <dd className="mono-text">{health?.deploymentId ?? 'unavailable'}</dd>
                 </div>
                 <div className="deployment-dl-row">
+                  <dt>Database</dt>
+                  <dd className="mono-text">
+                    {health
+                      ? health.databaseConnected
+                        ? 'Neon Serverless Postgres (connected)'
+                        : 'Browser localStorage (DATABASE_URL unset)'
+                      : 'unavailable'}
+                  </dd>
+                </div>
+                <div className="deployment-dl-row">
                   <dt>Commit SHA</dt>
                   <dd className="mono-text">{health?.commitSha ?? 'unavailable'}</dd>
                 </div>

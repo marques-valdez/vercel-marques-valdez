@@ -56,6 +56,14 @@ import {
   renameStoredWorkflow,
   upsertStoredWorkflow,
 } from '@/lib/workflow-store';
+import {
+  fetchWorkspaceSnapshot,
+  getOrCreateWorkspaceId,
+  resetRemoteWorkspace,
+  syncWorkspaceMessages,
+  syncWorkspaceMutations,
+  syncWorkspaceWorkflows,
+} from '@/lib/workspace-store';
 import type {
   ChannelDelta,
   DerivedTwinState,
@@ -168,6 +176,8 @@ export function WorkspaceClient({
 
   const twinStateRef = useRef<DerivedTwinState | null>(twinState);
   twinStateRef.current = twinState;
+  const workspaceIdRef = useRef<string>('');
+  const dbConnectedRef = useRef<boolean>(false);
   const architectModeRef = useRef<boolean>(architectMode);
   architectModeRef.current = architectMode;
   const injectFailureRef = useRef<boolean>(injectFailure);
@@ -221,8 +231,10 @@ export function WorkspaceClient({
   }, []);
 
   useEffect(() => {
-    void loadTwin();
+    const wsId = getOrCreateWorkspaceId();
+    workspaceIdRef.current = wsId;
     setSavedWorkflows(readStoredWorkflows());
+    void loadTwin();
   }, [loadTwin]);
 
   useEffect(() => {
@@ -365,6 +377,9 @@ export function WorkspaceClient({
             firstUserIdx > 0 ? sliced.slice(firstUserIdx) : sliced;
 
           return {
+            headers: workspaceIdRef.current
+              ? { 'X-Relay-Workspace': workspaceIdRef.current }
+              : undefined,
             body: {
               id,
               trigger,
@@ -402,6 +417,30 @@ export function WorkspaceClient({
     if (stored.length > 0) {
       setMessages(stored);
     }
+
+    const wsId = workspaceIdRef.current || getOrCreateWorkspaceId();
+    workspaceIdRef.current = wsId;
+    void (async () => {
+      const snapshot = await fetchWorkspaceSnapshot(wsId);
+      if (!snapshot || !snapshot.databaseConnected) {
+        return;
+      }
+      dbConnectedRef.current = true;
+      if (Array.isArray(snapshot.mutations) && snapshot.mutations.length > 0) {
+        try {
+          const derived = await fetchTwinState(snapshot.mutations);
+          setTwinState(derived);
+        } catch {
+          // Keep locally derived state if replay fails
+        }
+      }
+      if (Array.isArray(snapshot.workflows) && snapshot.workflows.length > 0) {
+        setSavedWorkflows(snapshot.workflows);
+      }
+      if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
+        setMessages(snapshot.messages);
+      }
+    })();
   }, [setMessages]);
 
   useEffect(() => {
@@ -409,6 +448,9 @@ export function WorkspaceClient({
       return;
     }
     writeStoredChatMessages(messages);
+    if (dbConnectedRef.current && workspaceIdRef.current) {
+      void syncWorkspaceMessages(workspaceIdRef.current, messages);
+    }
   }, [messages, status]);
 
   useEffect(() => {
@@ -449,6 +491,9 @@ export function WorkspaceClient({
 
     if (nextRecords) {
       setSavedWorkflows(nextRecords);
+      if (dbConnectedRef.current && workspaceIdRef.current) {
+        void syncWorkspaceWorkflows(workspaceIdRef.current, nextRecords);
+      }
       if (latestUpsertedId) {
         setSelectedWorkflowId(latestUpsertedId);
       }
@@ -543,13 +588,16 @@ export function WorkspaceClient({
   }, [clearError, messages, regenerate, sendMessage]);
 
   const handleApplyHygieneFix = useCallback(async () => {
-    const { state } = await appendTwinMutations([
+    const { mutations, state } = await appendTwinMutations([
       { type: 'fix_utm_taxonomy' },
       { type: 'pause_broken_creatives' },
     ]);
     setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
     setTwinState(state);
     setTwinError(null);
+    if (dbConnectedRef.current && workspaceIdRef.current) {
+      void syncWorkspaceMutations(workspaceIdRef.current, mutations);
+    }
   }, []);
 
   const handleApproveReallocation = useCallback(
@@ -565,6 +613,9 @@ export function WorkspaceClient({
       setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
       setTwinState(state);
       setTwinError(null);
+      if (dbConnectedRef.current && workspaceIdRef.current) {
+        void syncWorkspaceMutations(workspaceIdRef.current, mutations);
+      }
       setProposalDecisions((prev) => ({
         ...prev,
         [decisionKey]: 'approved',
@@ -638,6 +689,9 @@ export function WorkspaceClient({
     try {
       const freshState = await resetTwinMutations();
       setTwinState(freshState);
+      if (workspaceIdRef.current) {
+        void resetRemoteWorkspace(workspaceIdRef.current);
+      }
     } catch (err) {
       setTwinError(
         err instanceof Error ? err.message : 'Unable to reset campaign workspace.',
@@ -656,12 +710,19 @@ export function WorkspaceClient({
   }, []);
 
   const handleRenameWorkflow = useCallback((workflowId: string, nextName: string) => {
-    setSavedWorkflows(renameStoredWorkflow(workflowId, nextName));
+    const updated = renameStoredWorkflow(workflowId, nextName);
+    setSavedWorkflows(updated);
+    if (dbConnectedRef.current && workspaceIdRef.current) {
+      void syncWorkspaceWorkflows(workspaceIdRef.current, updated);
+    }
   }, []);
 
   const handleRemoveWorkflow = useCallback((workflowId: string) => {
     const updated = removeStoredWorkflow(workflowId);
     setSavedWorkflows(updated);
+    if (dbConnectedRef.current && workspaceIdRef.current) {
+      void syncWorkspaceWorkflows(workspaceIdRef.current, updated);
+    }
     setSelectedWorkflowId((prev) =>
       prev === workflowId ? updated[0]?.workflow.workflowId ?? null : prev,
     );

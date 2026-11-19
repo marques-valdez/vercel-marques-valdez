@@ -18,6 +18,7 @@ Key invariants enforced at the HTTP boundary:
 from __future__ import annotations
 
 from collections import OrderedDict, deque
+import json
 import math
 import os
 import platform
@@ -26,6 +27,7 @@ import threading
 import time
 from typing import Any, AsyncIterator, Final, Literal, Mapping, Self
 
+import anyio
 from fastapi import Body, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -43,6 +45,16 @@ from pydantic import (
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from app.agent import build_agent_graph
+from app.db import (
+    is_database_configured,
+    load_workspace_snapshot,
+    normalize_workspace_id,
+    record_telemetry_event,
+    reset_workspace_data,
+    save_workspace_messages,
+    save_workspace_mutations,
+    save_workspace_workflows,
+)
 from app.pricing import get_pricing_source
 from app.router import TierName, route_turn
 from app.sandbox_runner import (
@@ -213,10 +225,28 @@ class HealthResponse(BaseModel):
     commitSha: str
     pricingSource: str
     sandboxAvailable: bool
+    databaseConnected: bool = False
+    databaseProvider: Literal["neon-postgres", "browser-local"] = "browser-local"
     fastModels: list[str]
     reasoningModels: list[str]
     baselineModel: str
     serviceTopology: dict[str, str]
+
+
+class WorkspaceWorkflowsRequest(BaseModel):
+    """Inbound payload for PUT /api/agent/workspace/workflows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workflows: list[dict[str, Any]] = Field(default_factory=list, max_length=25)
+
+
+class WorkspaceMessagesRequest(BaseModel):
+    """Inbound payload for PUT /api/agent/workspace/messages."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_MESSAGES)
 
 
 class SandboxDirectQueryRequest(BaseModel):
@@ -339,6 +369,7 @@ async def handle_pydantic_validation_error(
 async def health_endpoint() -> HealthResponse:
     fast_route = route_turn("", tier_hint="fast")
     reasoning_route = route_turn("", tier_hint="reasoning")
+    db_configured = is_database_configured()
     return HealthResponse(
         status="ok",
         pythonVersion=platform.python_version(),
@@ -347,6 +378,8 @@ async def health_endpoint() -> HealthResponse:
         commitSha=os.getenv("VERCEL_GIT_COMMIT_SHA") or "local",
         pricingSource=get_pricing_source(),
         sandboxAvailable=is_sandbox_available(),
+        databaseConnected=db_configured,
+        databaseProvider="neon-postgres" if db_configured else "browser-local",
         fastModels=[fast_route.primary_model, *fast_route.fallback_models],
         reasoningModels=[reasoning_route.primary_model, *reasoning_route.fallback_models],
         baselineModel=reasoning_route.baseline_model,
@@ -356,6 +389,110 @@ async def health_endpoint() -> HealthResponse:
             "backend": "Python FastAPI + LangGraph",
         },
     )
+
+
+def _extract_workspace_id(request: Request) -> str | None:
+    return normalize_workspace_id(request.headers.get("x-relay-workspace"))
+
+
+@app.get("/api/agent/workspace")
+async def workspace_get_endpoint(request: Request) -> JSONResponse:
+    workspace_id = _extract_workspace_id(request)
+    if workspace_id is None:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"msg": "Missing or invalid X-Relay-Workspace header."}]},
+        )
+    try:
+        snapshot = await anyio.to_thread.run_sync(load_workspace_snapshot, workspace_id)
+    except Exception:
+        snapshot = {
+            "workspaceId": workspace_id,
+            "databaseConnected": False,
+            "mutations": [],
+            "workflows": [],
+            "messages": [],
+            "telemetryCount": 0,
+        }
+    return JSONResponse(content=snapshot)
+
+
+@app.put("/api/agent/workspace/mutations", response_model=DerivedTwinState)
+async def workspace_put_mutations_endpoint(
+    request: Request,
+    payload: TwinStateRequest = Body(default_factory=TwinStateRequest),
+) -> DerivedTwinState:
+    _raise_if_lone_surrogate(payload.model_dump(), "TwinStateRequest")
+    derived = compute_twin_state(payload.mutations)
+    workspace_id = _extract_workspace_id(request)
+    if workspace_id is not None and is_database_configured():
+        serialized = [m.model_dump(mode="json") for m in payload.mutations]
+        try:
+            await anyio.to_thread.run_sync(save_workspace_mutations, workspace_id, serialized)
+        except Exception:
+            pass
+    return derived
+
+
+@app.put("/api/agent/workspace/workflows")
+async def workspace_put_workflows_endpoint(
+    request: Request,
+    payload: WorkspaceWorkflowsRequest = Body(default_factory=WorkspaceWorkflowsRequest),
+) -> JSONResponse:
+    workspace_id = _extract_workspace_id(request)
+    if workspace_id is None:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"msg": "Missing or invalid X-Relay-Workspace header."}]},
+        )
+    persisted = False
+    if is_database_configured():
+        try:
+            persisted = await anyio.to_thread.run_sync(
+                save_workspace_workflows, workspace_id, payload.workflows
+            )
+        except Exception:
+            persisted = False
+    return JSONResponse(content={"ok": True, "persisted": persisted})
+
+
+@app.put("/api/agent/workspace/messages")
+async def workspace_put_messages_endpoint(
+    request: Request,
+    payload: WorkspaceMessagesRequest = Body(default_factory=WorkspaceMessagesRequest),
+) -> JSONResponse:
+    workspace_id = _extract_workspace_id(request)
+    if workspace_id is None:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"msg": "Missing or invalid X-Relay-Workspace header."}]},
+        )
+    persisted = False
+    if is_database_configured():
+        try:
+            persisted = await anyio.to_thread.run_sync(
+                save_workspace_messages, workspace_id, payload.messages
+            )
+        except Exception:
+            persisted = False
+    return JSONResponse(content={"ok": True, "persisted": persisted})
+
+
+@app.delete("/api/agent/workspace")
+async def workspace_delete_endpoint(request: Request) -> JSONResponse:
+    workspace_id = _extract_workspace_id(request)
+    if workspace_id is None:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"msg": "Missing or invalid X-Relay-Workspace header."}]},
+        )
+    persisted = False
+    if is_database_configured():
+        try:
+            persisted = await anyio.to_thread.run_sync(reset_workspace_data, workspace_id)
+        except Exception:
+            persisted = False
+    return JSONResponse(content={"ok": True, "persisted": persisted})
 
 
 @app.post("/api/agent/sandbox/query", response_model=SandboxQueryResult)
@@ -447,6 +584,9 @@ async def chat_endpoint(
         "pending_telemetry": None,
     }
 
+    workspace_id = _extract_workspace_id(request)
+    record_db_telemetry = workspace_id is not None and is_database_configured()
+
     async def _guarded_chat_stream() -> AsyncIterator[str]:
         budget_token = reset_request_sandbox_budget()
         try:
@@ -455,6 +595,21 @@ async def chat_endpoint(
                 initial_state,
                 timeout_seconds=float(timeout_override),
             ):
+                if record_db_telemetry and workspace_id is not None and frame.startswith("data: {"):
+                    try:
+                        parsed_frame = json.loads(frame[6:].strip())
+                        if (
+                            isinstance(parsed_frame, dict)
+                            and parsed_frame.get("type") == "data-telemetry"
+                            and isinstance(parsed_frame.get("data"), dict)
+                        ):
+                            await anyio.to_thread.run_sync(
+                                record_telemetry_event,
+                                workspace_id,
+                                parsed_frame["data"],
+                            )
+                    except Exception:
+                        pass
                 yield frame
         finally:
             restore_request_sandbox_budget(budget_token)

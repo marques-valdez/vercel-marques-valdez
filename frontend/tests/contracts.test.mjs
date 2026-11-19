@@ -1154,3 +1154,60 @@ test('chat-store persistence and opt-in Architect X-Ray controls in HeaderBar an
     globalThis.window = prevWindow;
   }
 });
+
+test('workspace-store ID persistence and Neon Postgres badge in VercelArchitectureStrip', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { WORKSPACE_ID_STORAGE_KEY, getOrCreateWorkspaceId } = loadTsModule(
+    'lib/workspace-store.ts',
+  );
+  const { VercelArchitectureStrip } = loadTsModule(
+    'components/VercelArchitectureStrip.tsx',
+  );
+
+  const backing = new Map();
+  const prevWindow = globalThis.window;
+  globalThis.window = {
+    location: { search: '' },
+    localStorage: {
+      getItem: (k) => (backing.has(k) ? backing.get(k) : null),
+      setItem: (k, v) => backing.set(k, String(v)),
+      removeItem: (k) => backing.delete(k),
+    },
+  };
+
+  try {
+    const id1 = getOrCreateWorkspaceId();
+    assert.ok(id1.startsWith('ws_'));
+    assert.equal(backing.get(WORKSPACE_ID_STORAGE_KEY), id1);
+    assert.equal(getOrCreateWorkspaceId(), id1);
+
+    globalThis.window.location.search = '?workspace=ws_shared_demo_99';
+    assert.equal(getOrCreateWorkspaceId(), 'ws_shared_demo_99');
+
+    const html = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(VercelArchitectureStrip, {
+        health: {
+          status: 'ok',
+          pythonVersion: '3.12',
+          vercelEnv: 'production',
+          deploymentId: 'dpl_1',
+          commitSha: 'abc123',
+          pricingSource: 'live',
+          sandboxAvailable: true,
+          databaseConnected: true,
+          databaseProvider: 'neon-postgres',
+        },
+        healthPingMs: 24,
+        injectFailure: false,
+        isStreaming: false,
+        onToggleInjectFailure: () => {},
+        onRunDemoStep: () => {},
+        onOpenInspector: () => {},
+      }),
+    );
+    assert.equal(html.includes('DB: Neon Postgres'), true);
+  } finally {
+    globalThis.window = prevWindow;
+  }
+});
