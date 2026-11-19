@@ -15,6 +15,7 @@ interface WorkflowCardProps {
   output?: WorkflowToolOutput;
   errorText?: string;
   onShare: (slug: string) => void;
+  onOpenInDrawer?: (workflowId: string) => void;
   onRetry: () => void;
 }
 
@@ -70,6 +71,7 @@ export function WorkflowCard({
   output,
   errorText,
   onShare,
+  onOpenInDrawer,
   onRetry,
 }: WorkflowCardProps) {
   const [runningDryRun, setRunningDryRun] = useState(false);
@@ -417,6 +419,16 @@ export function WorkflowCard({
           >
             Share playbook
           </button>
+          {onOpenInDrawer ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => onOpenInDrawer(output.workflowId)}
+              data-testid="workflow-open-dag-button"
+            >
+              View DAG in Workflows
+            </button>
+          ) : null}
         </div>
       </div>
     </section>

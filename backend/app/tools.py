@@ -118,6 +118,14 @@ class ProposeBudgetReallocationInput(BaseModel):
 class CompileWorkflowInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    name: str | None = Field(
+        default=None,
+        max_length=80,
+        description=(
+            "Optional descriptive workflow name shown in the Workflows flyout "
+            "(for example, 'LinkedIn 10% Pacing Guardrail')."
+        ),
+    )
     template: str = Field(
         default="daily-pacing-guardrail",
         description=(
@@ -268,12 +276,14 @@ def build_agent_tools(
         }
 
     async def _compile_workflow(
+        name: str | None = None,
         template: str = "daily-pacing-guardrail",
         channels: list[str] | None = None,
         threshold: int = 15,
         schedule: str = "0 7 * * *",
     ) -> dict[str, Any]:
         return compile_workflow(
+            name=name,
             template=template,
             channels=channels,
             threshold=threshold,

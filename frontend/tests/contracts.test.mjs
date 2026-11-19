@@ -43,8 +43,14 @@ function loadTsModule(relPath) {
 
   const localRequire = (specifier) => {
     if (specifier.startsWith('.')) {
-      const candidate = path.resolve(path.dirname(fullPath), `${specifier}.ts`);
-      return loadTsModule(path.relative(frontendRoot, candidate));
+      const base = path.resolve(path.dirname(fullPath), specifier);
+      const cand = fs.existsSync(`${base}.tsx`) ? `${base}.tsx` : `${base}.ts`;
+      return loadTsModule(path.relative(frontendRoot, cand));
+    }
+    if (specifier.startsWith('@/')) {
+      const base = path.resolve(frontendRoot, specifier.slice(2));
+      const cand = fs.existsSync(`${base}.tsx`) ? `${base}.tsx` : `${base}.ts`;
+      return loadTsModule(path.relative(frontendRoot, cand));
     }
     return requireFromFrontend(specifier);
   };
@@ -881,4 +887,163 @@ test('V2 Vercel showcase modules: gateway-preview, ProtocolXRay, VercelArchitect
   );
   assert.equal(sandboxHtml.includes('sandbox-preset-bar'), true);
   assert.equal(sandboxHtml.includes('sandbox-context-meter'), true);
+});
+
+test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, WorkflowsDrawer flyout, and HeaderBar counter', () => {
+  const React = requireFromFrontend('react');
+  const ReactDOMServer = requireFromFrontend('react-dom/server');
+  const {
+    WORKFLOW_STORAGE_KEY,
+    clearStoredWorkflows,
+    getWorkflowDisplayName,
+    readStoredWorkflows,
+    removeStoredWorkflow,
+    renameStoredWorkflow,
+    resolveWorkflowDagSteps,
+    upsertStoredWorkflow,
+  } = loadTsModule('lib/workflow-store.ts');
+  const { WorkflowDagView } = loadTsModule('components/WorkflowDagView.tsx');
+  const { WorkflowsDrawer } = loadTsModule('components/WorkflowsDrawer.tsx');
+  const { WorkflowCard } = loadTsModule('components/WorkflowCard.tsx');
+  const { HeaderBar } = loadTsModule('components/HeaderBar.tsx');
+
+  const backing = new Map();
+  const prevWindow = globalThis.window;
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (backing.has(k) ? backing.get(k) : null),
+      setItem: (k, v) => backing.set(k, String(v)),
+      removeItem: (k) => backing.delete(k),
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+
+  try {
+    const sampleWf = {
+      workflowId: 'wf_1234567890',
+      title: 'Paid Social Pacing Guardrail',
+      template: 'daily-pacing-guardrail',
+      slug: '',
+      channels: ['linkedin_ads', 'meta_ads'],
+      threshold: 12,
+      schedule: '0 7 * * *',
+      steps: [
+        { index: 0, node: 'Fetch channels', description: 'Load snapshot' },
+        { index: 1, node: 'Check creative URL status', description: 'Check 404s' },
+        { index: 2, node: 'Validate UTM schema', description: 'Check UTMs' },
+        { index: 3, node: 'Aggregate rows in Sandbox', description: 'Run SQLite' },
+        { index: 4, node: 'Threshold gate', description: 'Evaluate gate' },
+        { index: 5, node: 'Digest', description: 'Format digest' },
+      ],
+      temporalCode: '@workflow.defn\nclass RelayCampaignGuardrailWorkflow:\n    pass\n',
+    };
+
+    const resolvedSteps = resolveWorkflowDagSteps(sampleWf);
+    assert.equal(resolvedSteps.length, 6);
+    assert.deepEqual(resolvedSteps[0].dependsOn, []);
+    assert.deepEqual(resolvedSteps[1].dependsOn, ['Fetch channels']);
+    assert.deepEqual(resolvedSteps[2].dependsOn, ['Fetch channels']);
+    assert.deepEqual(resolvedSteps[3].dependsOn, ['Fetch channels']);
+    assert.deepEqual(resolvedSteps[4].dependsOn, [
+      'Check creative URL status',
+      'Validate UTM schema',
+      'Aggregate rows in Sandbox',
+    ]);
+    assert.deepEqual(resolvedSteps[5].dependsOn, ['Threshold gate']);
+
+    assert.deepEqual(readStoredWorkflows(), []);
+    const afterInsert = upsertStoredWorkflow(sampleWf, '2026-11-19T06:00:00Z');
+    assert.equal(afterInsert.length, 1);
+    assert.ok(backing.has(WORKFLOW_STORAGE_KEY));
+    assert.equal(getWorkflowDisplayName(afterInsert[0]), 'Paid Social Pacing Guardrail');
+
+    const afterRename = renameStoredWorkflow('wf_1234567890', 'Executive Morning Guard');
+    assert.equal(getWorkflowDisplayName(afterRename[0]), 'Executive Morning Guard');
+
+    const dagHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(WorkflowDagView, {
+        workflow: afterRename[0].workflow,
+        stepStates: {
+          'Fetch channels': { status: 'completed', ms: 5 },
+          'Aggregate rows in Sandbox': { status: 'completed', ms: 24, mode: 'sandbox' },
+        },
+      }),
+    );
+    assert.equal(dagHtml.includes('data-testid="workflow-dag-view"'), true);
+    assert.equal(
+      dagHtml.includes('data-dag-edge="Fetch channels-&gt;Check creative URL status"'),
+      true,
+    );
+    assert.equal(
+      dagHtml.includes('data-dag-edge="Aggregate rows in Sandbox-&gt;Threshold gate"'),
+      true,
+    );
+    assert.equal(dagHtml.includes('data-dag-edge="Threshold gate-&gt;Digest"'), true);
+    assert.equal(dagHtml.includes('Vercel Sandbox'), true);
+
+    const emptyDrawerHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(WorkflowsDrawer, {
+        isOpen: true,
+        workflows: [],
+        selectedWorkflowId: null,
+        onSelectWorkflow: () => {},
+        onRenameWorkflow: () => {},
+        onRemoveWorkflow: () => {},
+        onShareWorkflow: () => {},
+        onCompileSample: () => {},
+        onClose: () => {},
+      }),
+    );
+    assert.equal(emptyDrawerHtml.includes('workflows-empty-state'), true);
+
+    const drawerHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(WorkflowsDrawer, {
+        isOpen: true,
+        workflows: afterRename,
+        selectedWorkflowId: 'wf_1234567890',
+        onSelectWorkflow: () => {},
+        onRenameWorkflow: () => {},
+        onRemoveWorkflow: () => {},
+        onShareWorkflow: () => {},
+        onCompileSample: () => {},
+        onClose: () => {},
+      }),
+    );
+    assert.equal(drawerHtml.includes('Executive Morning Guard'), true);
+    assert.equal(drawerHtml.includes('wf_1234567890'), true);
+    assert.equal(drawerHtml.includes('In-app SSE dry run · Temporal code preview'), true);
+
+    const cardWithDagBtnHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(WorkflowCard, {
+        state: 'completed',
+        output: afterRename[0].workflow,
+        onShare: () => {},
+        onOpenInDrawer: () => {},
+        onRetry: () => {},
+      }),
+    );
+    assert.equal(cardWithDagBtnHtml.includes('View DAG in Workflows'), true);
+
+    const headerHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(HeaderBar, {
+        twinState: null,
+        telemetryEntries: [],
+        inspectorOpen: false,
+        workflowCount: 2,
+        workflowsOpen: true,
+        onOpenShare: () => {},
+        onToggleWorkflows: () => {},
+        onToggleInspector: () => {},
+      }),
+    );
+    assert.equal(headerHtml.includes('Workflows (2)'), true);
+
+    const afterRemove = removeStoredWorkflow('wf_1234567890');
+    assert.equal(afterRemove.length, 0);
+    clearStoredWorkflows();
+    assert.equal(backing.has(WORKFLOW_STORAGE_KEY), false);
+  } finally {
+    globalThis.window = prevWindow;
+  }
 });

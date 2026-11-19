@@ -85,6 +85,19 @@ CANONICAL_WORKFLOW_NODES: Final[tuple[tuple[str, str], ...]] = (
     ),
 )
 
+CANONICAL_WORKFLOW_DEPENDENCIES: Final[dict[str, tuple[str, ...]]] = {
+    "Fetch channels": (),
+    "Check creative URL status": ("Fetch channels",),
+    "Validate UTM schema": ("Fetch channels",),
+    "Aggregate rows in Sandbox": ("Fetch channels",),
+    "Threshold gate": (
+        "Check creative URL status",
+        "Validate UTM schema",
+        "Aggregate rows in Sandbox",
+    ),
+    "Digest": ("Threshold gate",),
+}
+
 DEFAULT_WORKFLOW_TEMPLATE: Final[WorkflowTemplateId] = "daily-pacing-guardrail"
 DEFAULT_THRESHOLD_PCT: Final[int] = 15
 DEFAULT_CRON_SCHEDULE: Final[str] = "0 7 * * *"
@@ -185,6 +198,20 @@ def normalize_schedule(schedule: Any = None) -> str:
     return cleaned
 
 
+def normalize_workflow_name(name: Any = None, fallback: str = "") -> str:
+    """Normalize an optional human-readable workflow name (single-line, <= 80 chars)."""
+    if name is None:
+        return fallback
+    if not isinstance(name, str):
+        raise ValueError("workflow name must be a string")
+    cleaned = " ".join(name.strip().split())
+    if not cleaned:
+        return fallback
+    if len(cleaned) > 80:
+        raise ValueError("workflow name must be at most 80 characters")
+    return cleaned
+
+
 def encode_playbook_slug(
     template: WorkflowTemplateId,
     channels: Sequence[ChannelId],
@@ -217,6 +244,7 @@ def build_temporal_workflow_code(
         '"""Generated for production on Fieldstone Kubernetes + Temporal workers.\n'
         'Display-only artifact in Relay Studio (not executed during browser dry runs)."""\n\n'
         "from __future__ import annotations\n\n"
+        "import asyncio\n"
         "from dataclasses import dataclass\n"
         "from datetime import timedelta\n"
         "from temporalio import activity, workflow\n"
@@ -277,23 +305,25 @@ def build_temporal_workflow_code(
         "            start_to_close_timeout=timeout,\n"
         "            retry_policy=retry,\n"
         "        )\n"
-        "        url_report = await workflow.execute_activity(\n"
-        "            check_creative_url_status,\n"
-        "            snapshot,\n"
-        "            start_to_close_timeout=timeout,\n"
-        "            retry_policy=retry,\n"
-        "        )\n"
-        "        utm_report = await workflow.execute_activity(\n"
-        "            validate_utm_schema,\n"
-        "            snapshot,\n"
-        "            start_to_close_timeout=timeout,\n"
-        "            retry_policy=retry,\n"
-        "        )\n"
-        "        roas_summary = await workflow.execute_activity(\n"
-        "            aggregate_rows_in_sandbox,\n"
-        "            params.channels,\n"
-        "            start_to_close_timeout=timeout,\n"
-        "            retry_policy=retry,\n"
+        "        url_report, utm_report, roas_summary = await asyncio.gather(\n"
+        "            workflow.execute_activity(\n"
+        "                check_creative_url_status,\n"
+        "                snapshot,\n"
+        "                start_to_close_timeout=timeout,\n"
+        "                retry_policy=retry,\n"
+        "            ),\n"
+        "            workflow.execute_activity(\n"
+        "                validate_utm_schema,\n"
+        "                snapshot,\n"
+        "                start_to_close_timeout=timeout,\n"
+        "                retry_policy=retry,\n"
+        "            ),\n"
+        "            workflow.execute_activity(\n"
+        "                aggregate_rows_in_sandbox,\n"
+        "                params.channels,\n"
+        "                start_to_close_timeout=timeout,\n"
+        "                retry_policy=retry,\n"
+        "            ),\n"
         "        )\n"
         "        gate_result = await workflow.execute_activity(\n"
         "            evaluate_threshold_gate,\n"
@@ -313,6 +343,7 @@ def build_temporal_workflow_code(
 
 def compile_workflow(
     *,
+    name: str | None = None,
     template: str | None = None,
     channels: Sequence[str] | None = None,
     threshold: int | None = None,
@@ -324,22 +355,28 @@ def compile_workflow(
     norm_threshold = normalize_threshold(threshold)
     norm_schedule = normalize_schedule(schedule)
 
-    title = WORKFLOW_TEMPLATES[norm_template]
+    default_title = WORKFLOW_TEMPLATES[norm_template]
+    title = normalize_workflow_name(name, fallback=default_title)
     slug = encode_playbook_slug(norm_template, norm_channels, norm_threshold)
+    fingerprint_payload: dict[str, Any] = {
+        "template": norm_template,
+        "channels": norm_channels,
+        "threshold": norm_threshold,
+        "schedule": norm_schedule,
+    }
+    if title != default_title:
+        fingerprint_payload["name"] = title
     fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "template": norm_template,
-                "channels": norm_channels,
-                "threshold": norm_threshold,
-                "schedule": norm_schedule,
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
+        json.dumps(fingerprint_payload, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:10]
 
     steps = [
-        {"index": idx, "node": node_name, "description": description}
+        {
+            "index": idx,
+            "node": node_name,
+            "description": description,
+            "dependsOn": list(CANONICAL_WORKFLOW_DEPENDENCIES.get(node_name, ())),
+        }
         for idx, (node_name, description) in enumerate(CANONICAL_WORKFLOW_NODES)
     ]
     temporal_code = build_temporal_workflow_code(

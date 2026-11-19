@@ -7,7 +7,10 @@ interface HeaderBarProps {
   twinState: DerivedTwinState | null;
   telemetryEntries: TelemetryData[];
   inspectorOpen: boolean;
+  workflowCount?: number;
+  workflowsOpen?: boolean;
   onOpenShare: () => void;
+  onToggleWorkflows?: () => void;
   onToggleInspector: () => void;
 }
 
@@ -15,7 +18,10 @@ export function HeaderBar({
   twinState,
   telemetryEntries,
   inspectorOpen,
+  workflowCount = 0,
+  workflowsOpen = false,
   onOpenShare,
+  onToggleWorkflows,
   onToggleInspector,
 }: HeaderBarProps) {
   const totalCostUsd = telemetryEntries.reduce((sum, item) => sum + item.costUsd, 0);
@@ -85,6 +91,16 @@ export function HeaderBar({
             onClick={onOpenShare}
           >
             Share playbook
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary tabular-nums"
+            aria-expanded={workflowsOpen}
+            aria-controls="workflows-drawer"
+            onClick={() => onToggleWorkflows?.()}
+            data-testid="header-workflows-button"
+          >
+            {workflowCount > 0 ? `Workflows (${workflowCount})` : 'Workflows'}
           </button>
           <button
             type="button"

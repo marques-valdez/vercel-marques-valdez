@@ -175,6 +175,13 @@ export interface WorkflowStepSpec {
   index?: number;
   node: string;
   description?: string;
+  dependsOn?: string[];
+}
+
+export interface SavedWorkflowRecord {
+  workflow: WorkflowToolOutput;
+  customName?: string;
+  savedAt: string;
 }
 
 export interface WorkflowToolOutput {

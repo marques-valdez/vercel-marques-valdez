@@ -16,6 +16,7 @@ import { ShareModal } from './ShareModal';
 import { TelemetryStrip } from './TelemetryStrip';
 import { VercelArchitectureStrip } from './VercelArchitectureStrip';
 import { WorkflowCard } from './WorkflowCard';
+import { WorkflowsDrawer } from './WorkflowsDrawer';
 import { MarkdownText } from './MarkdownText';
 import { PLAYBOOKS } from '@/lib/playbooks';
 import {
@@ -24,6 +25,14 @@ import {
   readStoredMutations,
   resetTwinMutations,
 } from '@/lib/twin-client';
+import {
+  clearStoredWorkflows,
+  isValidWorkflowOutput,
+  readStoredWorkflows,
+  removeStoredWorkflow,
+  renameStoredWorkflow,
+  upsertStoredWorkflow,
+} from '@/lib/workflow-store';
 import type {
   ChannelDelta,
   DerivedTwinState,
@@ -36,6 +45,7 @@ import type {
   ResolvedPlaybook,
   SandboxStatusData,
   SandboxToolOutput,
+  SavedWorkflowRecord,
   TelemetryData,
   WireFrameRecord,
   WorkflowToolOutput,
@@ -113,6 +123,9 @@ export function WorkspaceClient({
   const [inspectorInitialTab, setInspectorInitialTab] = useState<
     'all' | 'adapter' | 'deployment'
   >('all');
+  const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflowRecord[]>([]);
+  const [workflowsOpen, setWorkflowsOpen] = useState(false);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [wireFramesByTurn, setWireFramesByTurn] = useState<
     Record<string, WireFrameRecord[]>
   >({});
@@ -132,6 +145,7 @@ export function WorkspaceClient({
   twinStateRef.current = twinState;
   const turnCaptureCounterRef = useRef(0);
   const autoOpenNextXRayRef = useRef(false);
+  const seenWorkflowCallIdsRef = useRef<Set<string>>(new Set());
 
   const lastTierHintRef = useRef<'fast' | 'reasoning' | null>(
     initialRemix?.tierHint ?? null,
@@ -179,6 +193,7 @@ export function WorkspaceClient({
   useEffect(() => {
     void loadTwin();
     void loadHealth();
+    setSavedWorkflows(readStoredWorkflows());
   }, [loadTwin, loadHealth]);
 
   const transport = useMemo(
@@ -344,6 +359,50 @@ export function WorkspaceClient({
   } = useChat<RelayUIMessage>({ transport });
 
   const isStreaming = status === 'submitted' || status === 'streaming';
+
+  useEffect(() => {
+    let latestUpsertedId: string | null = null;
+    let nextRecords: SavedWorkflowRecord[] | null = null;
+
+    for (const msg of messages) {
+      if (msg.role !== 'assistant') {
+        continue;
+      }
+      for (const part of msg.parts) {
+        if (
+          part.type === 'tool-compile_workflow' &&
+          part.state === 'output-available' &&
+          part.output &&
+          !seenWorkflowCallIdsRef.current.has(part.toolCallId)
+        ) {
+          seenWorkflowCallIdsRef.current.add(part.toolCallId);
+          if (isValidWorkflowOutput(part.output)) {
+            nextRecords = upsertStoredWorkflow(part.output);
+            latestUpsertedId = part.output.workflowId;
+          }
+        } else if (
+          part.type === 'dynamic-tool' &&
+          part.toolName === 'compile_workflow' &&
+          part.state === 'output-available' &&
+          part.output &&
+          !seenWorkflowCallIdsRef.current.has(part.toolCallId)
+        ) {
+          seenWorkflowCallIdsRef.current.add(part.toolCallId);
+          if (isValidWorkflowOutput(part.output)) {
+            nextRecords = upsertStoredWorkflow(part.output);
+            latestUpsertedId = part.output.workflowId;
+          }
+        }
+      }
+    }
+
+    if (nextRecords) {
+      setSavedWorkflows(nextRecords);
+      if (latestUpsertedId) {
+        setSelectedWorkflowId(latestUpsertedId);
+      }
+    }
+  }, [messages]);
 
   const allTelemetryEntries = useMemo(() => {
     const entries: TelemetryData[] = [];
@@ -555,6 +614,11 @@ export function WorkspaceClient({
     setWireFramesByOrder([]);
     setAutoOpenXRayKey(null);
     turnCaptureCounterRef.current = 0;
+    seenWorkflowCallIdsRef.current.clear();
+    clearStoredWorkflows();
+    setSavedWorkflows([]);
+    setSelectedWorkflowId(null);
+    setWorkflowsOpen(false);
     setTwinError(null);
     setHighlightedPlaybookId(null);
     setPrimedTierHint(null);
@@ -574,8 +638,34 @@ export function WorkspaceClient({
     setShareModalOpen(true);
   }, []);
 
+  const handleOpenWorkflowInDrawer = useCallback((workflowId: string) => {
+    setInspectorOpen(false);
+    setSelectedWorkflowId(workflowId);
+    setWorkflowsOpen(true);
+  }, []);
+
+  const handleRenameWorkflow = useCallback((workflowId: string, nextName: string) => {
+    setSavedWorkflows(renameStoredWorkflow(workflowId, nextName));
+  }, []);
+
+  const handleRemoveWorkflow = useCallback((workflowId: string) => {
+    const updated = removeStoredWorkflow(workflowId);
+    setSavedWorkflows(updated);
+    setSelectedWorkflowId((prev) =>
+      prev === workflowId ? updated[0]?.workflow.workflowId ?? null : prev,
+    );
+  }, []);
+
+  const handleCompileSampleWorkflow = useCallback(() => {
+    const pb = PLAYBOOKS.find((p) => p.id === 'daily-pacing-guardrail');
+    if (pb) {
+      handleSelectPlaybook(pb);
+    }
+  }, [handleSelectPlaybook]);
+
   const handleOpenInspectorTab = useCallback(
     (tab: 'all' | 'adapter' | 'deployment') => {
+      setWorkflowsOpen(false);
       setInspectorInitialTab(tab);
       setInspectorOpen(true);
     },
@@ -704,6 +794,7 @@ export function WorkspaceClient({
             output={part.state === 'output-available' ? part.output : undefined}
             errorText={part.state === 'output-error' ? part.errorText : undefined}
             onShare={handleOpenWorkflowShare}
+            onOpenInDrawer={handleOpenWorkflowInDrawer}
             onRetry={handleRetry}
           />
         );
@@ -781,6 +872,7 @@ export function WorkspaceClient({
               }
               errorText={errText}
               onShare={handleOpenWorkflowShare}
+              onOpenInDrawer={handleOpenWorkflowInDrawer}
               onRetry={handleRetry}
             />
           );
@@ -825,8 +917,17 @@ export function WorkspaceClient({
         twinState={twinState}
         telemetryEntries={allTelemetryEntries}
         inspectorOpen={inspectorOpen}
+        workflowCount={savedWorkflows.length}
+        workflowsOpen={workflowsOpen}
         onOpenShare={() => setShareModalOpen(true)}
-        onToggleInspector={() => setInspectorOpen((prev) => !prev)}
+        onToggleWorkflows={() => {
+          setInspectorOpen(false);
+          setWorkflowsOpen((prev) => !prev);
+        }}
+        onToggleInspector={() => {
+          setWorkflowsOpen(false);
+          setInspectorOpen((prev) => !prev);
+        }}
       />
 
       <main className="workspace-main">
@@ -1003,6 +1104,18 @@ export function WorkspaceClient({
         isOpen={shareModalOpen}
         initialSlug={shareSlug}
         onClose={() => setShareModalOpen(false)}
+      />
+
+      <WorkflowsDrawer
+        isOpen={workflowsOpen}
+        workflows={savedWorkflows}
+        selectedWorkflowId={selectedWorkflowId}
+        onSelectWorkflow={setSelectedWorkflowId}
+        onRenameWorkflow={handleRenameWorkflow}
+        onRemoveWorkflow={handleRemoveWorkflow}
+        onShareWorkflow={handleOpenWorkflowShare}
+        onCompileSample={handleCompileSampleWorkflow}
+        onClose={() => setWorkflowsOpen(false)}
       />
 
       <InspectorDrawer

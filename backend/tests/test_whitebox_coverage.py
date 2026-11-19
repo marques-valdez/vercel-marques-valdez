@@ -2170,3 +2170,48 @@ def test_adv_iter3_literal_sse_headers_and_residual_helper_branches() -> None:
     dec_prev = preview_budget_reallocation([], default_shift_share=Decimal("0.25"))
     assert dec_prev.amountPerDay == 350.0
 
+
+async def test_workflow_dag_dependencies_custom_naming_and_prompt_grounding() -> None:
+    """Verify DAG dependsOn topology, optional workflow naming, asyncio.gather codegen, and system prompt grounding."""
+    from app.agent import build_system_prompt
+    from app.workflow import normalize_workflow_name
+
+    default_wf = compile_workflow()
+    assert default_wf["title"] == "Compile a daily pacing guardrail"
+    assert [step["dependsOn"] for step in default_wf["steps"]] == [
+        [],
+        ["Fetch channels"],
+        ["Fetch channels"],
+        ["Fetch channels"],
+        [
+            "Check creative URL status",
+            "Validate UTM schema",
+            "Aggregate rows in Sandbox",
+        ],
+        ["Threshold gate"],
+    ]
+    assert "asyncio.gather(" in default_wf["temporalCode"]
+    ast.parse(default_wf["temporalCode"])
+
+    named_wf = compile_workflow(name="  Paid Social\nPacing Guard (10%)  ", threshold=10)
+    assert named_wf["title"] == "Paid Social Pacing Guard (10%)"
+    assert named_wf["workflowId"] != compile_workflow(threshold=10)["workflowId"]
+    assert normalize_workflow_name("   ", fallback="Fallback Name") == "Fallback Name"
+
+    with pytest.raises(ValueError, match="must be a string"):
+        normalize_workflow_name(123, fallback="x")
+    with pytest.raises(ValueError, match="at most 80"):
+        normalize_workflow_name("A" * 81, fallback="x")
+
+    tools_map = {t.name: t for t in build_agent_tools()}
+    tool_res = await tools_map["compile_workflow"].ainvoke(
+        {"name": "Morning Hygiene Flow", "channels": ["linkedin_ads"], "threshold": 12}
+    )
+    assert tool_res["title"] == "Morning Hygiene Flow"
+
+    prompt_text = build_system_prompt(compute_twin_state())
+    assert "`Workflows` flyout" in prompt_text
+    assert "never invent non-existent pages" in prompt_text
+    assert "does NOT run a live Temporal server" in prompt_text
+
+
