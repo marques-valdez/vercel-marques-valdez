@@ -7,13 +7,22 @@ import { ChannelHealthStrip } from './ChannelHealthStrip';
 import { Composer } from './Composer';
 import { HeaderBar } from './HeaderBar';
 import { HygieneCard } from './HygieneCard';
+import { InspectorDrawer } from './InspectorDrawer';
 import { PlaybookGrid } from './PlaybookGrid';
+import { ProtocolXRay } from './ProtocolXRay';
 import { ReallocationCard } from './ReallocationCard';
 import { SandboxCard } from './SandboxCard';
 import { ShareModal } from './ShareModal';
+import { TelemetryStrip } from './TelemetryStrip';
+import { VercelArchitectureStrip } from './VercelArchitectureStrip';
 import { WorkflowCard } from './WorkflowCard';
 import { WorkflowsDrawer } from './WorkflowsDrawer';
 import { MarkdownText } from './MarkdownText';
+import {
+  clearStoredChatMessages,
+  readStoredChatMessages,
+  writeStoredChatMessages,
+} from '@/lib/chat-store';
 import { PLAYBOOKS } from '@/lib/playbooks';
 import {
   appendTwinMutations,
@@ -32,6 +41,7 @@ import {
 import type {
   ChannelDelta,
   DerivedTwinState,
+  HealthStatus,
   HygieneToolOutput,
   PlaybookDefinition,
   PlaybookId,
@@ -41,6 +51,8 @@ import type {
   SandboxStatusData,
   SandboxToolOutput,
   SavedWorkflowRecord,
+  TelemetryData,
+  WireFrameRecord,
   WorkflowToolOutput,
 } from '@/lib/types';
 
@@ -78,6 +90,7 @@ function computeChannelDeltas(
 
 interface WorkspaceClientProps {
   initialRemix: ResolvedPlaybook | null;
+  initialArchitectMode?: boolean;
   uiStreamSource?: string;
 }
 
@@ -93,10 +106,24 @@ function mapToolStateToCardState(
   return 'skeleton';
 }
 
-export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
+export function WorkspaceClient({
+  initialRemix,
+  initialArchitectMode = false,
+  uiStreamSource = '',
+}: WorkspaceClientProps) {
   const [twinState, setTwinState] = useState<DerivedTwinState | null>(null);
   const [channelDeltas, setChannelDeltas] = useState<Record<string, ChannelDelta>>({});
   const [twinError, setTwinError] = useState<string | null>(null);
+  const [architectMode, setArchitectMode] = useState<boolean>(initialArchitectMode);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [healthPingMs, setHealthPingMs] = useState<number | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [injectFailure, setInjectFailure] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorInitialTab, setInspectorInitialTab] = useState<
+    'all' | 'adapter' | 'deployment'
+  >('all');
+  const [playbooksExpanded, setPlaybooksExpanded] = useState(false);
 
   const [input, setInput] = useState<string>(() => initialRemix?.prompt ?? '');
   const [highlightedPlaybookId, setHighlightedPlaybookId] =
@@ -108,6 +135,11 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
   const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflowRecord[]>([]);
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [wireFramesByTurn, setWireFramesByTurn] = useState<
+    Record<string, WireFrameRecord[]>
+  >({});
+  const [wireFramesByOrder, setWireFramesByOrder] = useState<WireFrameRecord[][]>([]);
+  const [autoOpenXRayKey, setAutoOpenXRayKey] = useState<string | null>(null);
   const [shareSlug, setShareSlug] = useState<string>(
     () => initialRemix?.slug ?? 'creative-404-guard',
   );
@@ -118,6 +150,13 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
 
   const twinStateRef = useRef<DerivedTwinState | null>(twinState);
   twinStateRef.current = twinState;
+  const architectModeRef = useRef<boolean>(architectMode);
+  architectModeRef.current = architectMode;
+  const injectFailureRef = useRef<boolean>(injectFailure);
+  injectFailureRef.current = injectFailure;
+  const turnCaptureCounterRef = useRef(0);
+  const autoOpenNextXRayRef = useRef(false);
+  const chatHydratedRef = useRef(false);
   const seenWorkflowCallIdsRef = useRef<Set<string>>(new Set());
 
   const lastTierHintRef = useRef<'fast' | 'reasoning' | null>(
@@ -140,15 +179,150 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
     }
   }, []);
 
+  const loadHealth = useCallback(async () => {
+    setHealthLoading(true);
+    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    try {
+      const response = await fetch('/api/agent/health', { cache: 'no-store' });
+      const elapsed = Math.max(
+        1,
+        Math.round(
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0,
+        ),
+      );
+      if (response.ok) {
+        const data = (await response.json()) as HealthStatus;
+        setHealth(data);
+        setHealthPingMs(elapsed);
+      }
+    } catch {
+      // Keep health null so Inspector shows graceful unavailable state
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadTwin();
     setSavedWorkflows(readStoredWorkflows());
   }, [loadTwin]);
 
+  useEffect(() => {
+    if (architectMode && !health && !healthLoading) {
+      void loadHealth();
+    }
+  }, [architectMode, health, healthLoading, loadHealth]);
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport<RelayUIMessage>({
         api: '/api/agent/chat',
+        fetch: async (inputUrl, init) => {
+          const response = await globalThis.fetch(inputUrl, init);
+          const contentType = response.headers.get('content-type') || '';
+          if (
+            !architectModeRef.current ||
+            !response.body ||
+            !contentType.toLowerCase().includes('text/event-stream')
+          ) {
+            return response;
+          }
+          const [sdkStream, tapStream] = response.body.tee();
+          const captureOrderIdx = turnCaptureCounterRef.current;
+          turnCaptureCounterRef.current += 1;
+          const startedAt =
+            typeof performance !== 'undefined' ? performance.now() : Date.now();
+
+          void (async () => {
+            const reader = tapStream.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            let messageIdKey: string | null = null;
+            const collected: WireFrameRecord[] = [];
+            let frameSeq = 0;
+
+            const pushFrame = (rawData: string) => {
+              const now =
+                typeof performance !== 'undefined' ? performance.now() : Date.now();
+              const offsetMs = Math.max(0, Math.round(now - startedAt));
+              let frameType = rawData === '[DONE]' ? '[DONE]' : 'data';
+              let parsedObj: Record<string, unknown> | null = null;
+              if (rawData !== '[DONE]') {
+                try {
+                  const candidate = JSON.parse(rawData) as unknown;
+                  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+                    parsedObj = candidate as Record<string, unknown>;
+                    if (typeof parsedObj.type === 'string') {
+                      frameType = parsedObj.type;
+                    }
+                    if (
+                      frameType === 'start' &&
+                      typeof parsedObj.messageId === 'string' &&
+                      parsedObj.messageId
+                    ) {
+                      messageIdKey = parsedObj.messageId;
+                    }
+                  }
+                } catch {
+                  // Preserve raw frame text even if non-JSON
+                }
+              }
+              frameSeq += 1;
+              collected.push({
+                id: `${captureOrderIdx}-${frameSeq}`,
+                offsetMs,
+                type: frameType,
+                raw: rawData,
+                payload: parsedObj,
+              });
+              const snapshot = [...collected];
+              if (messageIdKey) {
+                const key = messageIdKey;
+                setWireFramesByTurn((prev) => ({ ...prev, [key]: snapshot }));
+                if (autoOpenNextXRayRef.current) {
+                  autoOpenNextXRayRef.current = false;
+                  setAutoOpenXRayKey(key);
+                }
+              }
+              setWireFramesByOrder((prev) => {
+                const next = [...prev];
+                next[captureOrderIdx] = snapshot;
+                return next;
+              });
+            };
+
+            try {
+              while (true) {
+                const { value, done } = await reader.read();
+                if (done) {
+                  break;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                let splitIdx = buffer.indexOf('\n\n');
+                while (splitIdx !== -1) {
+                  const block = buffer.slice(0, splitIdx);
+                  buffer = buffer.slice(splitIdx + 2);
+                  const dataLines = block
+                    .split('\n')
+                    .filter((line) => line.startsWith('data:'))
+                    .map((line) => line.slice(5).trim());
+                  if (dataLines.length > 0) {
+                    pushFrame(dataLines.join('\n'));
+                  }
+                  splitIdx = buffer.indexOf('\n\n');
+                }
+              }
+            } catch {
+              // Ignore aborted tap stream
+            }
+          })();
+
+          return new Response(sdkStream, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          });
+        },
         prepareSendMessagesRequest: ({ id, messages, trigger, body }) => {
           const perCallBody = (body ?? {}) as Record<string, unknown>;
           const resolvedTierHint =
@@ -172,7 +346,7 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
               trigger,
               messages: bounded,
               twinMutations: readStoredMutations(),
-              injectFailure: false,
+              injectFailure: architectModeRef.current && injectFailureRef.current,
               ...perCallBody,
               tierHint: resolvedTierHint ?? null,
             },
@@ -194,6 +368,24 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
   } = useChat<RelayUIMessage>({ transport });
 
   const isStreaming = status === 'submitted' || status === 'streaming';
+
+  useEffect(() => {
+    if (chatHydratedRef.current) {
+      return;
+    }
+    chatHydratedRef.current = true;
+    const stored = readStoredChatMessages();
+    if (stored.length > 0) {
+      setMessages(stored);
+    }
+  }, [setMessages]);
+
+  useEffect(() => {
+    if (!chatHydratedRef.current || status !== 'ready') {
+      return;
+    }
+    writeStoredChatMessages(messages);
+  }, [messages, status]);
 
   useEffect(() => {
     let latestUpsertedId: string | null = null;
@@ -250,6 +442,7 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
       lastTierHintRef.current = playbook.tierHint;
       lastUserPromptRef.current = playbook.prompt;
       setPrimedTierHint(null);
+      setPlaybooksExpanded(false);
       setInput('');
       void sendMessage(
         { text: playbook.prompt },
@@ -257,7 +450,7 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
           body: {
             tierHint: playbook.tierHint,
             twinMutations: readStoredMutations(),
-            injectFailure: false,
+            injectFailure: architectModeRef.current && injectFailureRef.current,
           },
         },
       );
@@ -292,7 +485,7 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
         body: {
           tierHint: activeTierHint,
           twinMutations: readStoredMutations(),
-          injectFailure: false,
+          injectFailure: architectModeRef.current && injectFailureRef.current,
         },
       },
     );
@@ -400,13 +593,20 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
     lastUserPromptRef.current = '';
     clearError();
     setMessages([]);
+    clearStoredChatMessages();
     setProposalDecisions({});
     setChannelDeltas({});
+    setWireFramesByTurn({});
+    setWireFramesByOrder([]);
+    setAutoOpenXRayKey(null);
+    setPlaybooksExpanded(false);
+    setInjectFailure(false);
     seenWorkflowCallIdsRef.current.clear();
     clearStoredWorkflows();
     setSavedWorkflows([]);
     setSelectedWorkflowId(null);
     setWorkflowsOpen(false);
+    setInspectorOpen(false);
     setTwinError(null);
     setHighlightedPlaybookId(null);
     setPrimedTierHint(null);
@@ -449,6 +649,98 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
       handleSelectPlaybook(pb);
     }
   }, [handleSelectPlaybook]);
+
+  const handleToggleArchitectMode = useCallback(() => {
+    setArchitectMode((prev) => {
+      const next = !prev;
+      if (!next) {
+        setInjectFailure(false);
+        setInspectorOpen(false);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleOpenInspectorFromStrip = useCallback(
+    (tab: 'runtime' | 'adapter' | 'deployment') => {
+      setInspectorInitialTab(tab === 'runtime' ? 'all' : tab);
+      setInspectorOpen(true);
+    },
+    [],
+  );
+
+  const handleRunDemoStep = useCallback(
+    (step: 'sandbox' | 'xray' | 'failover' | 'og') => {
+      if (step === 'og') {
+        setShareModalOpen(true);
+        return;
+      }
+      if (isStreaming) {
+        return;
+      }
+      const playbookMap: Record<'sandbox' | 'xray' | 'failover', PlaybookId> = {
+        sandbox: 'cross-channel-roas',
+        xray: 'creative-404-guard',
+        failover: 'paid-social-reallocation',
+      };
+      const pb = PLAYBOOKS.find((item) => item.id === playbookMap[step]);
+      if (!pb) {
+        return;
+      }
+      if (step === 'xray') {
+        autoOpenNextXRayRef.current = true;
+      }
+      if (step === 'failover') {
+        injectFailureRef.current = true;
+        setInjectFailure(true);
+      }
+      handleSelectPlaybook(pb);
+    },
+    [handleSelectPlaybook, isStreaming],
+  );
+
+  const telemetryEntries = useMemo(() => {
+    const entries: TelemetryData[] = [];
+    for (const msg of messages) {
+      if (msg.role !== 'assistant') {
+        continue;
+      }
+      for (const part of msg.parts) {
+        if (part.type === 'data-telemetry' && part.data) {
+          entries.push(part.data);
+        }
+      }
+    }
+    return entries;
+  }, [messages]);
+
+  const totalTokensAvoided = useMemo(() => {
+    let total = 0;
+    for (const msg of messages) {
+      if (msg.role !== 'assistant') {
+        continue;
+      }
+      for (const part of msg.parts) {
+        if (
+          part.type === 'tool-analyze_in_sandbox' &&
+          part.state === 'output-available' &&
+          part.output &&
+          typeof part.output.estTokensAvoided === 'number'
+        ) {
+          total += part.output.estTokensAvoided;
+        } else if (
+          part.type === 'dynamic-tool' &&
+          part.toolName === 'analyze_in_sandbox' &&
+          part.state === 'output-available' &&
+          part.output &&
+          typeof (part.output as SandboxToolOutput).estTokensAvoided === 'number'
+        ) {
+          total += (part.output as SandboxToolOutput).estTokensAvoided;
+        }
+      }
+    }
+    return total;
+  }, [messages]);
 
   const renderMessagePart = (
     part: RelayUIMessage['parts'][number],
@@ -646,18 +938,38 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
     error?.message && error.message.includes('No AI Gateway credential'),
   );
 
+  let assistantOrderIndex = -1;
+
   return (
     <div className="workspace-page">
       <HeaderBar
         twinState={twinState}
+        telemetryEntries={telemetryEntries}
+        inspectorOpen={inspectorOpen}
+        architectMode={architectMode}
+        hasConversation={messages.length > 0}
         workflowCount={savedWorkflows.length}
         workflowsOpen={workflowsOpen}
         onOpenShare={() => setShareModalOpen(true)}
         onToggleWorkflows={() => setWorkflowsOpen((prev) => !prev)}
+        onToggleInspector={() => setInspectorOpen((prev) => !prev)}
+        onToggleArchitectMode={handleToggleArchitectMode}
         onResetWorkspace={() => void handleResetDemo()}
       />
 
       <main className="workspace-main">
+        {architectMode ? (
+          <VercelArchitectureStrip
+            health={health}
+            healthPingMs={healthPingMs}
+            injectFailure={injectFailure}
+            isStreaming={isStreaming}
+            onToggleInjectFailure={setInjectFailure}
+            onRunDemoStep={handleRunDemoStep}
+            onOpenInspector={handleOpenInspectorFromStrip}
+          />
+        ) : null}
+
         <ChannelHealthStrip
           twinState={twinState}
           errorText={twinError}
@@ -673,74 +985,133 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
             onSelectPlaybook={handleSelectPlaybook}
           />
         ) : (
-          <section
-            className="conversation-stream"
-            aria-label="Campaign assistant conversation"
-            data-testid="conversation-stream"
-          >
-            {messages.map((message) => {
-              if (message.role === 'user') {
-                const userText = message.parts
-                  .filter(
-                    (p): p is Extract<RelayUIMessage['parts'][number], { type: 'text' }> =>
-                      p.type === 'text',
-                  )
-                  .map((p) => p.text)
-                  .join('\n')
-                  .trim();
+          <>
+            <section
+              className="playbooks-compact-bar"
+              aria-label="Starter playbooks switcher"
+              data-testid="playbooks-compact-bar"
+            >
+              <div className="playbooks-compact-header">
+                <button
+                  type="button"
+                  className={
+                    playbooksExpanded ? 'btn-chip btn-chip-active' : 'btn-chip'
+                  }
+                  aria-expanded={playbooksExpanded}
+                  onClick={() => setPlaybooksExpanded((prev) => !prev)}
+                  data-testid="playbooks-compact-toggle"
+                >
+                  {playbooksExpanded ? 'Hide playbooks' : 'Starter playbooks'}
+                </button>
+                <span className="playbooks-compact-hint">
+                  Run another audit, ROAS breakdown, budget shift, or recurring check
+                </span>
+              </div>
+              {playbooksExpanded ? (
+                <PlaybookGrid
+                  highlightedPlaybookId={highlightedPlaybookId}
+                  disabled={isStreaming}
+                  onSelectPlaybook={handleSelectPlaybook}
+                />
+              ) : null}
+            </section>
 
-                if (!userText) {
+            <section
+              className="conversation-stream"
+              aria-label="Campaign assistant conversation"
+              data-testid="conversation-stream"
+            >
+              {messages.map((message) => {
+                if (message.role === 'user') {
+                  const userText = message.parts
+                    .filter(
+                      (p): p is Extract<RelayUIMessage['parts'][number], { type: 'text' }> =>
+                        p.type === 'text',
+                    )
+                    .map((p) => p.text)
+                    .join('\n')
+                    .trim();
+
+                  if (!userText) {
+                    return null;
+                  }
+
+                  return (
+                    <article
+                      key={message.id}
+                      className="message-turn message-user"
+                      data-message-role="user"
+                    >
+                      <div className="user-bubble">{userText}</div>
+                    </article>
+                  );
+                }
+
+                assistantOrderIndex += 1;
+                const currentAssistantIdx = assistantOrderIndex;
+
+                const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
+                const turnTelemetry: TelemetryData[] = [];
+                for (const part of message.parts) {
+                  if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
+                    sandboxStatusByCallId[part.data.toolCallId] = part.data;
+                  } else if (part.type === 'data-telemetry' && part.data) {
+                    turnTelemetry.push(part.data);
+                  }
+                }
+
+                const renderedParts = message.parts
+                  .map((part, idx) =>
+                    renderMessagePart(part, idx, sandboxStatusByCallId),
+                  )
+                  .filter((node) => node !== null);
+
+                const capturedFrames = architectMode
+                  ? wireFramesByTurn[message.id] ??
+                    wireFramesByOrder[currentAssistantIdx] ??
+                    []
+                  : [];
+
+                if (renderedParts.length === 0 && !isStreaming) {
                   return null;
                 }
 
                 return (
                   <article
                     key={message.id}
-                    className="message-turn message-user"
-                    data-message-role="user"
+                    className="message-turn message-assistant"
+                    data-message-role="assistant"
                   >
-                    <div className="user-bubble">{userText}</div>
+                    {renderedParts.length > 0 ? (
+                      <div className="assistant-parts-stack">
+                        {renderedParts}
+                        {architectMode && turnTelemetry.length > 0 ? (
+                          <TelemetryStrip
+                            entries={turnTelemetry}
+                            onOpenFinOps={() => handleOpenInspectorFromStrip('runtime')}
+                          />
+                        ) : null}
+                        {architectMode && capturedFrames.length > 0 ? (
+                          <ProtocolXRay
+                            frames={capturedFrames}
+                            uiStreamSource={uiStreamSource}
+                            defaultOpen={autoOpenXRayKey === message.id}
+                          />
+                        ) : null}
+                      </div>
+                    ) : isStreaming ? (
+                      <div
+                        className="assistant-streaming-placeholder"
+                        aria-live="polite"
+                      >
+                        Reviewing your active campaigns…
+                      </div>
+                    ) : null}
                   </article>
                 );
-              }
-
-              const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
-              for (const part of message.parts) {
-                if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
-                  sandboxStatusByCallId[part.data.toolCallId] = part.data;
-                }
-              }
-
-              const renderedParts = message.parts
-                .map((part, idx) =>
-                  renderMessagePart(part, idx, sandboxStatusByCallId),
-                )
-                .filter((node) => node !== null);
-
-              if (renderedParts.length === 0 && !isStreaming) {
-                return null;
-              }
-
-              return (
-                <article
-                  key={message.id}
-                  className="message-turn message-assistant"
-                  data-message-role="assistant"
-                >
-                  {renderedParts.length > 0 ? (
-                    <div className="assistant-parts-stack">{renderedParts}</div>
-                  ) : isStreaming ? (
-                    <div
-                      className="assistant-streaming-placeholder"
-                      aria-live="polite"
-                    >
-                      Reviewing your active campaigns…
-                    </div>
-                  ) : null}
-                </article>
-              );
-            })}
-          </section>
+              })}
+            </section>
+          </>
         )}
 
         {error ? (
@@ -777,6 +1148,9 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
         value={input}
         isStreaming={isStreaming}
         primedTierHint={primedTierHint}
+        health={health}
+        injectFailure={injectFailure}
+        architectMode={architectMode}
         onChange={handleComposerChange}
         onSubmit={handleComposerSubmit}
         onStop={() => void stop()}
@@ -799,6 +1173,24 @@ export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
         onCompileSample={handleCompileSampleWorkflow}
         onClose={() => setWorkflowsOpen(false)}
       />
+
+      {architectMode ? (
+        <InspectorDrawer
+          isOpen={inspectorOpen}
+          initialTab={inspectorInitialTab}
+          injectFailure={injectFailure}
+          telemetryEntries={telemetryEntries}
+          totalTokensAvoided={totalTokensAvoided}
+          messages={messages}
+          uiStreamSource={uiStreamSource}
+          health={health}
+          healthLoading={healthLoading}
+          onClose={() => setInspectorOpen(false)}
+          onToggleInjectFailure={setInjectFailure}
+          onRefreshHealth={() => void loadHealth()}
+          onResetDemo={handleResetDemo}
+        />
+      ) : null}
     </div>
   );
 }

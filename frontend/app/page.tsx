@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 interface WorkspacePageProps {
   searchParams: Promise<{
     remix?: string | string[];
+    xray?: string | string[];
   }>;
 }
 
@@ -20,12 +21,21 @@ export default async function WorkspacePage({ searchParams }: WorkspacePageProps
         ? resolvedSearchParams.remix[0]
         : undefined;
 
+  const rawXray =
+    typeof resolvedSearchParams.xray === 'string'
+      ? resolvedSearchParams.xray
+      : Array.isArray(resolvedSearchParams.xray)
+        ? resolvedSearchParams.xray[0]
+        : undefined;
+
   const initialRemix = rawRemix ? resolvePlaybookSlug(rawRemix) : null;
+  const initialArchitectMode = rawXray === '1' || rawXray === 'true';
   const uiStreamSource = loadUiStreamSource();
 
   return (
     <WorkspaceClient
       initialRemix={initialRemix}
+      initialArchitectMode={initialArchitectMode}
       uiStreamSource={uiStreamSource}
     />
   );

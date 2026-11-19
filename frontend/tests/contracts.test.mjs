@@ -1062,3 +1062,95 @@ test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, Workflows
     globalThis.window = prevWindow;
   }
 });
+
+test('chat-store persistence and opt-in Architect X-Ray controls in HeaderBar and Composer', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const {
+    CHAT_STORAGE_KEY,
+    readStoredChatMessages,
+    writeStoredChatMessages,
+    clearStoredChatMessages,
+  } = loadTsModule('lib/chat-store.ts');
+  const { HeaderBar } = loadTsModule('components/HeaderBar.tsx');
+  const { Composer } = loadTsModule('components/Composer.tsx');
+
+  const backing = new Map();
+  const prevWindow = globalThis.window;
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (backing.has(k) ? backing.get(k) : null),
+      setItem: (k, v) => backing.set(k, String(v)),
+      removeItem: (k) => backing.delete(k),
+    },
+  };
+
+  try {
+    assert.deepEqual(readStoredChatMessages(), []);
+    const sampleMessages = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Audit campaigns' }] },
+      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Found active landing page issues.' }] },
+    ];
+    writeStoredChatMessages(sampleMessages);
+    assert.equal(backing.has(CHAT_STORAGE_KEY), true);
+    assert.equal(readStoredChatMessages().length, 2);
+
+    clearStoredChatMessages();
+    assert.equal(readStoredChatMessages().length, 0);
+
+    const customerHeader = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(HeaderBar, {
+        twinState: null,
+        architectMode: false,
+        onOpenShare: () => {},
+        onToggleInspector: () => {},
+        onToggleArchitectMode: () => {},
+      }),
+    );
+    assert.equal(customerHeader.includes('X-Ray'), true);
+    assert.equal(customerHeader.includes('Inspector'), false);
+
+    const xrayHeader = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(HeaderBar, {
+        twinState: null,
+        architectMode: true,
+        onOpenShare: () => {},
+        onToggleInspector: () => {},
+        onToggleArchitectMode: () => {},
+      }),
+    );
+    assert.equal(xrayHeader.includes('X-Ray: On'), true);
+    assert.equal(xrayHeader.includes('Inspector'), true);
+
+    const customerComposer = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(Composer, {
+        value: 'Shift budget across paid social',
+        isStreaming: false,
+        architectMode: false,
+        onChange: () => {},
+        onSubmit: () => {},
+        onStop: () => {},
+      }),
+    );
+    assert.equal(customerComposer.includes('Google Ads · LinkedIn Ads · Meta Ads'), true);
+    assert.equal(customerComposer.includes('AI Gateway ->'), false);
+
+    const xrayComposer = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(Composer, {
+        value: 'Shift budget across paid social',
+        isStreaming: false,
+        architectMode: true,
+        onChange: () => {},
+        onSubmit: () => {},
+        onStop: () => {},
+      }),
+    );
+    assert.equal(
+      xrayComposer.includes('AI Gateway -&gt; REASONING') ||
+        xrayComposer.includes('AI Gateway -> REASONING'),
+      true,
+    );
+  } finally {
+    globalThis.window = prevWindow;
+  }
+});

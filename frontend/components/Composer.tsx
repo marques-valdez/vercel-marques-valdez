@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
+import { previewGatewayRoute } from '@/lib/gateway-preview';
 import type { HealthStatus } from '@/lib/types';
 
 export const MAX_INPUT_CHARS = 2000;
@@ -32,6 +33,7 @@ interface ComposerProps {
   primedTierHint?: 'fast' | 'reasoning' | null;
   health?: HealthStatus | null;
   injectFailure?: boolean;
+  architectMode?: boolean;
   onChange: (nextValue: string) => void;
   onSubmit: () => void;
   onStop: () => void;
@@ -40,6 +42,10 @@ interface ComposerProps {
 export function Composer({
   value,
   isStreaming,
+  primedTierHint = null,
+  health = null,
+  injectFailure = false,
+  architectMode = false,
   onChange,
   onSubmit,
   onStop,
@@ -59,6 +65,16 @@ export function Composer({
 
   const trimmedLength = value.trim().length;
   const canSend = !isStreaming && trimmedLength > 0 && value.length <= MAX_INPUT_CHARS;
+  const routePreview = architectMode
+    ? previewGatewayRoute(value, primedTierHint, health)
+    : null;
+  const routeReason = routePreview
+    ? routePreview.routedBy === 'card'
+      ? 'card hint'
+      : routePreview.matchedKeyword
+        ? `keyword "${routePreview.matchedKeyword}"`
+        : 'default fast'
+    : '';
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (
@@ -102,9 +118,36 @@ export function Composer({
         />
         <div className="composer-controls">
           <div className="composer-meta-group">
-            <span className="composer-route-preview">
-              Google Ads · LinkedIn Ads · Meta Ads
-            </span>
+            {architectMode && routePreview ? (
+              <span
+                className="composer-route-preview mono-text tabular-nums"
+                data-testid="composer-route-preview"
+              >
+                <span
+                  className={
+                    routePreview.tier === 'reasoning'
+                      ? 'arch-dot arch-dot-amber'
+                      : 'arch-dot arch-dot-blue'
+                  }
+                  aria-hidden="true"
+                />
+                <span>
+                  {`AI Gateway -> ${routePreview.tier.toUpperCase()} (${routeReason}) · ${routePreview.primaryModel}`}
+                </span>
+                {routePreview.fallbackModels.length > 0 ? (
+                  <span className="composer-route-muted">
+                    {` +${routePreview.fallbackModels.length} fallback`}
+                  </span>
+                ) : null}
+                {injectFailure ? (
+                  <span className="composer-route-armed"> · 503 armed</span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="composer-route-preview">
+                Google Ads · LinkedIn Ads · Meta Ads
+              </span>
+            )}
             <span className="composer-counter tabular-nums" aria-live="polite">
               {value.length.toLocaleString('en-US')} / 2,000
             </span>
