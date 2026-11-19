@@ -56,7 +56,7 @@ from app.db import (
     save_workspace_workflows,
 )
 from app.pricing import get_pricing_source
-from app.router import TierName, route_turn
+from app.router import TierName, route_turn, route_turn_async
 from app.sandbox_runner import (
     SandboxQueryResult,
     is_sandbox_available,
@@ -565,8 +565,19 @@ async def chat_endpoint(
 
     conv = payload.converted_conversation
     twin_state = compute_twin_state(payload.twinMutations)
-    route = route_turn(conv.latest_user_text, tier_hint=payload.tierHint)
     custom_factory = getattr(request.app.state, "model_factory", None)
+    use_semantic_router = custom_factory is None or bool(
+        getattr(request.app.state, "enable_semantic_router", False)
+    )
+    if use_semantic_router:
+        route = await route_turn_async(
+            conv.latest_user_text,
+            tier_hint=payload.tierHint,
+            api_key=get_gateway_credential(),
+            http_client=getattr(request.app.state, "semantic_router_client", None),
+        )
+    else:
+        route = route_turn(conv.latest_user_text, tier_hint=payload.tierHint)
     timeout_override = getattr(
         request.app.state, "turn_timeout_seconds", TURN_TIMEOUT_SECONDS
     )

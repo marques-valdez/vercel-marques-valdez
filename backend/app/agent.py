@@ -425,6 +425,10 @@ def build_agent_graph(
             "baselineCostUsd": baseline_cost_usd,
             "latencyMs": latency_ms,
         }
+        if route.routing_confidence is not None:
+            telemetry["routingConfidence"] = route.routing_confidence
+        if route.router_model is not None:
+            telemetry["routerModel"] = route.router_model
 
         normalized_calls: list[dict[str, Any]] = []
         raw_tool_calls = getattr(final_ai_msg, "tool_calls", None) or []

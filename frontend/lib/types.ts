@@ -239,7 +239,9 @@ export interface WorkflowRunStepEvent {
 
 export interface TelemetryData {
   tier: 'fast' | 'reasoning';
-  routedBy: 'card' | 'keyword';
+  routedBy: 'card' | 'decision' | 'semantic' | 'keyword';
+  routingConfidence?: number;
+  routerModel?: string;
   primaryModel: string;
   servedModel: string;
   failover: 'none' | 'gateway' | 'simulated';

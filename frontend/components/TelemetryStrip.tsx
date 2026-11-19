@@ -47,7 +47,15 @@ export function TelemetryStrip({ entries, onOpenFinOps }: TelemetryStripProps) {
         {`tier: ${first.tier}`}
       </span>
       <span className="telemetry-sep" aria-hidden="true">·</span>
-      <span className="telemetry-item">{`routed: ${first.routedBy}`}</span>
+      <span
+        className="telemetry-item"
+        title={first.routerModel ? `Router model: ${first.routerModel}` : undefined}
+        data-testid="telemetry-routed-by"
+      >
+        {typeof first.routingConfidence === 'number'
+          ? `routed: ${first.routedBy} (${Math.round(first.routingConfidence * 100)}%)`
+          : `routed: ${first.routedBy}`}
+      </span>
       <span className="telemetry-sep" aria-hidden="true">·</span>
       <span className="telemetry-item" data-testid="telemetry-served-model">
         {displayedModel}

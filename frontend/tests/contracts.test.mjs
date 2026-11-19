@@ -1212,6 +1212,37 @@ test('workspace-store ID persistence and Neon Postgres badge in VercelArchitectu
   }
 });
 
+test('TelemetryStrip displays semantic decision routing confidence when present', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { TelemetryStrip } = loadTsModule('components/TelemetryStrip.tsx');
+
+  const html = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(TelemetryStrip, {
+      entries: [
+        {
+          tier: 'reasoning',
+          routedBy: 'decision',
+          routingConfidence: 0.94,
+          routerModel: 'baseten/joey-1',
+          primaryModel: 'reflection/beam-free',
+          servedModel: 'reflection/beam-free',
+          failover: 'none',
+          inputTokens: 120,
+          cachedTokens: 20,
+          outputTokens: 60,
+          costUsd: 0,
+          baselineCostUsd: 0,
+          latencyMs: 310,
+        },
+      ],
+    }),
+  );
+
+  assert.equal(html.includes('routed: decision (94%)'), true);
+  assert.equal(html.includes('Router model: baseten/joey-1'), true);
+});
+
 test('ReallocationCard renders 30-day Monte Carlo P10/P50/P90 forecast band', async () => {
   const React = (await import('react')).default;
   const ReactDOMServer = (await import('react-dom/server')).default;
