@@ -289,12 +289,12 @@ def test_gateway_chat_openai_omits_temperature_and_preserves_gateway_metadata(
     )
     assert isinstance(llm, GatewayChatOpenAI)
     assert llm.temperature is None
-    assert llm.max_tokens == 1200
+    assert llm.max_tokens == 2048
 
     payload = llm._get_request_payload([HumanMessage(content="Audit campaign hygiene")])
     assert "temperature" not in payload
     assert payload["model"] == "anthropic/claude-sonnet-5.5"
-    assert payload["max_completion_tokens"] == 1200
+    assert payload["max_completion_tokens"] == 2048
     assert payload["extra_body"] == {
         "providerOptions": {
             "gateway": {

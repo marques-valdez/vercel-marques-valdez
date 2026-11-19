@@ -124,8 +124,17 @@ export interface SandboxStatusData {
 }
 
 export interface AgentStatusData {
-  phase: 'connecting' | 'planning' | 'tool' | 'synthesizing';
+  phase: 'connecting' | 'planning' | 'tool' | 'synthesizing' | 'truncated';
   label: string;
+}
+
+export interface BackendAlert {
+  id: string;
+  severity: 'error' | 'warning';
+  title: string;
+  message: string;
+  technicalDetail?: string;
+  retryable?: boolean;
 }
 
 export interface WireFrameRecord {

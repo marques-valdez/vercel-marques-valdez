@@ -21,6 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
+import { BackendAlertBanner, buildHttpErrorAlert } from './BackendAlertBanner';
 import { ChannelHealthStrip } from './ChannelHealthStrip';
 import { Composer } from './Composer';
 import { HeaderBar } from './HeaderBar';
@@ -65,6 +66,7 @@ import {
   syncWorkspaceWorkflows,
 } from '@/lib/workspace-store';
 import type {
+  BackendAlert,
   ChannelDelta,
   DerivedTwinState,
   HealthStatus,
@@ -140,6 +142,8 @@ export function WorkspaceClient({
   const [twinState, setTwinState] = useState<DerivedTwinState | null>(null);
   const [channelDeltas, setChannelDeltas] = useState<Record<string, ChannelDelta>>({});
   const [twinError, setTwinError] = useState<string | null>(null);
+  const [backendAlert, setBackendAlert] = useState<BackendAlert | null>(null);
+  const [syncWarning, setSyncWarning] = useState<BackendAlert | null>(null);
   const [architectMode, setArchitectMode] = useState<boolean>(initialArchitectMode);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthPingMs, setHealthPingMs] = useState<number | null>(null);
@@ -185,6 +189,7 @@ export function WorkspaceClient({
   const turnCaptureCounterRef = useRef(0);
   const autoOpenNextXRayRef = useRef(false);
   const chatHydratedRef = useRef(false);
+  const userStoppedRef = useRef(false);
   const seenWorkflowCallIdsRef = useRef<Set<string>>(new Set());
 
   const lastTierHintRef = useRef<'fast' | 'reasoning' | null>(
@@ -248,18 +253,46 @@ export function WorkspaceClient({
       new DefaultChatTransport<RelayUIMessage>({
         api: '/api/agent/chat',
         fetch: async (inputUrl, init) => {
-          const response = await globalThis.fetch(inputUrl, init);
+          userStoppedRef.current = false;
+          let response: Response;
+          try {
+            response = await globalThis.fetch(inputUrl, init);
+          } catch (fetchErr) {
+            if (!userStoppedRef.current) {
+              setBackendAlert({
+                id: `network-${Date.now()}`,
+                severity: 'error',
+                title: 'CONNECTION ERROR',
+                message:
+                  'Could not reach the backend service. Check your connection and click Retry.',
+                technicalDetail:
+                  fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+                retryable: true,
+              });
+            }
+            throw fetchErr;
+          }
+
+          if (!response.ok) {
+            try {
+              const rawErr = await response.clone().text();
+              setBackendAlert(buildHttpErrorAlert(response.status, rawErr));
+            } catch {
+              setBackendAlert(buildHttpErrorAlert(response.status, ''));
+            }
+            return response;
+          }
+
           const contentType = response.headers.get('content-type') || '';
           if (
-            !architectModeRef.current ||
             !response.body ||
             !contentType.toLowerCase().includes('text/event-stream')
           ) {
             return response;
           }
-          // Tee the SSE response stream only when Architect X-Ray is enabled so
-          // the AI SDK consumes `sdkStream` unmodified while `tapStream` records
-          // raw v1 frames for ProtocolXRay with zero overhead in default view.
+          // Tee every SSE response so the AI SDK consumes `sdkStream`
+          // unmodified while `tapStream` monitors stream completion (to catch
+          // premature drops/timeouts) and captures wire frames in X-Ray mode.
           const [sdkStream, tapStream] = response.body.tee();
           const captureOrderIdx = turnCaptureCounterRef.current;
           turnCaptureCounterRef.current += 1;
@@ -273,6 +306,9 @@ export function WorkspaceClient({
             let messageIdKey: string | null = null;
             const collected: WireFrameRecord[] = [];
             let frameSeq = 0;
+            let sawTerminalFrame = false;
+            let sawErrorFrame = false;
+            let lastErrorText = '';
 
             const pushFrame = (rawData: string) => {
               const now =
@@ -280,7 +316,9 @@ export function WorkspaceClient({
               const offsetMs = Math.max(0, Math.round(now - startedAt));
               let frameType = rawData === '[DONE]' ? '[DONE]' : 'data';
               let parsedObj: Record<string, unknown> | null = null;
-              if (rawData !== '[DONE]') {
+              if (rawData === '[DONE]') {
+                sawTerminalFrame = true;
+              } else {
                 try {
                   const candidate = JSON.parse(rawData) as unknown;
                   if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
@@ -288,7 +326,14 @@ export function WorkspaceClient({
                     if (typeof parsedObj.type === 'string') {
                       frameType = parsedObj.type;
                     }
-                    if (
+                    if (frameType === 'finish') {
+                      sawTerminalFrame = true;
+                    } else if (frameType === 'error') {
+                      sawErrorFrame = true;
+                      if (typeof parsedObj.errorText === 'string') {
+                        lastErrorText = parsedObj.errorText;
+                      }
+                    } else if (
                       frameType === 'start' &&
                       typeof parsedObj.messageId === 'string' &&
                       parsedObj.messageId
@@ -299,6 +344,9 @@ export function WorkspaceClient({
                 } catch {
                   // Preserve raw frame text even if non-JSON
                 }
+              }
+              if (!architectModeRef.current) {
+                return;
               }
               frameSeq += 1;
               collected.push({
@@ -345,8 +393,32 @@ export function WorkspaceClient({
                   splitIdx = buffer.indexOf('\n\n');
                 }
               }
+              if (!userStoppedRef.current) {
+                if (sawErrorFrame && lastErrorText) {
+                  setBackendAlert({
+                    id: `sse-error-${Date.now()}`,
+                    severity: 'error',
+                    title: lastErrorText.includes('No AI Gateway credential')
+                      ? 'SETUP REQUIRED'
+                      : 'REQUEST FAILED',
+                    message: lastErrorText,
+                    technicalDetail: `SSE error frame: ${lastErrorText}`,
+                    retryable: true,
+                  });
+                } else if (!sawTerminalFrame) {
+                  setBackendAlert({
+                    id: `sse-dropped-${Date.now()}`,
+                    severity: 'error',
+                    title: 'RESPONSE INTERRUPTED',
+                    message:
+                      'The backend connection closed before finishing your request. Click Retry to run it again.',
+                    technicalDetail: 'SSE stream ended before finish/[DONE] frame',
+                    retryable: true,
+                  });
+                }
+              }
             } catch {
-              // Ignore aborted tap stream
+              // Ignore aborted tap stream when user clicks Stop
             }
           })();
 
@@ -404,7 +476,27 @@ export function WorkspaceClient({
     status,
     error,
     clearError,
-  } = useChat<RelayUIMessage>({ transport });
+  } = useChat<RelayUIMessage>({
+    transport,
+    onError: (err) => {
+      setBackendAlert((prev) => {
+        if (prev) {
+          return prev;
+        }
+        const msg = err?.message || 'Unable to process your request on the backend.';
+        return {
+          id: `sdk-err-${Date.now()}`,
+          severity: 'error',
+          title: msg.includes('No AI Gateway credential')
+            ? 'SETUP REQUIRED'
+            : 'REQUEST FAILED',
+          message: msg,
+          technicalDetail: msg,
+          retryable: true,
+        };
+      });
+    },
+  });
 
   const isStreaming = status === 'submitted' || status === 'streaming';
 
@@ -449,7 +541,19 @@ export function WorkspaceClient({
     }
     writeStoredChatMessages(messages);
     if (dbConnectedRef.current && workspaceIdRef.current) {
-      void syncWorkspaceMessages(workspaceIdRef.current, messages);
+      void syncWorkspaceMessages(workspaceIdRef.current, messages).then((ok) => {
+        if (!ok) {
+          setSyncWarning({
+            id: `sync-msg-${Date.now()}`,
+            severity: 'warning',
+            title: 'SAVED LOCALLY',
+            message:
+              'Your conversation is saved in this browser, but syncing to the cloud database failed.',
+            technicalDetail: 'PUT /api/agent/workspace/messages failed',
+            retryable: false,
+          });
+        }
+      });
     }
   }, [messages, status]);
 
@@ -562,6 +666,7 @@ export function WorkspaceClient({
 
   const handleRetry = useCallback(() => {
     clearError();
+    setBackendAlert(null);
     const hasUserMessage = messages.some((m) => m.role === 'user');
     if (hasUserMessage) {
       void regenerate({
@@ -588,52 +693,106 @@ export function WorkspaceClient({
   }, [clearError, messages, regenerate, sendMessage]);
 
   const handleApplyHygieneFix = useCallback(async () => {
-    const { mutations, state } = await appendTwinMutations([
-      { type: 'fix_utm_taxonomy' },
-      { type: 'pause_broken_creatives' },
-    ]);
-    setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
-    setTwinState(state);
-    setTwinError(null);
-    if (dbConnectedRef.current && workspaceIdRef.current) {
-      void syncWorkspaceMutations(workspaceIdRef.current, mutations);
+    try {
+      const { mutations, state } = await appendTwinMutations([
+        { type: 'fix_utm_taxonomy' },
+        { type: 'pause_broken_creatives' },
+      ]);
+      setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
+      setTwinState(state);
+      setTwinError(null);
+      setBackendAlert(null);
+      if (dbConnectedRef.current && workspaceIdRef.current) {
+        void syncWorkspaceMutations(workspaceIdRef.current, mutations).then(
+          (res) => {
+            if (!res) {
+              setSyncWarning({
+                id: `sync-mut-${Date.now()}`,
+                severity: 'warning',
+                title: 'SAVED LOCALLY',
+                message:
+                  'Your campaign fix is active in this browser, but syncing to the cloud database failed.',
+                technicalDetail: 'PUT /api/agent/workspace/mutations failed',
+                retryable: false,
+              });
+            }
+          },
+        );
+      }
+    } catch (err) {
+      setBackendAlert({
+        id: `hygiene-err-${Date.now()}`,
+        severity: 'error',
+        title: 'COULD NOT APPLY CAMPAIGN FIX',
+        message:
+          'The backend could not save your broken-link and UTM fixes. Please try again.',
+        technicalDetail: err instanceof Error ? err.message : String(err),
+        retryable: false,
+      });
     }
   }, []);
 
   const handleApproveReallocation = useCallback(
     async (proposal: ReallocationToolOutput, decisionKey: string) => {
-      const { mutations, state } = await appendTwinMutations([
-        {
-          type: 'reallocate_budget',
-          from_campaign: proposal.fromCampaign,
-          to_campaign: proposal.toCampaign,
-          amount_per_day: proposal.amountPerDay,
-        },
-      ]);
-      setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
-      setTwinState(state);
-      setTwinError(null);
-      if (dbConnectedRef.current && workspaceIdRef.current) {
-        void syncWorkspaceMutations(workspaceIdRef.current, mutations);
-      }
-      setProposalDecisions((prev) => ({
-        ...prev,
-        [decisionKey]: 'approved',
-      }));
-      clearError();
-      const approvalText = `Approved budget shift from ${proposal.fromCampaignName || proposal.fromCampaign} to ${proposal.toCampaignName || proposal.toCampaign}.`;
-      lastTierHintRef.current = 'reasoning';
-      lastUserPromptRef.current = approvalText;
-      void sendMessage(
-        { text: approvalText },
-        {
-          body: {
-            tierHint: 'reasoning',
-            twinMutations: mutations,
-            injectFailure: false,
+      try {
+        const { mutations, state } = await appendTwinMutations([
+          {
+            type: 'reallocate_budget',
+            from_campaign: proposal.fromCampaign,
+            to_campaign: proposal.toCampaign,
+            amount_per_day: proposal.amountPerDay,
           },
-        },
-      );
+        ]);
+        setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
+        setTwinState(state);
+        setTwinError(null);
+        setBackendAlert(null);
+        if (dbConnectedRef.current && workspaceIdRef.current) {
+          void syncWorkspaceMutations(workspaceIdRef.current, mutations).then(
+            (res) => {
+              if (!res) {
+                setSyncWarning({
+                  id: `sync-mut-${Date.now()}`,
+                  severity: 'warning',
+                  title: 'SAVED LOCALLY',
+                  message:
+                    'Your budget shift is active in this browser, but syncing to the cloud database failed.',
+                  technicalDetail: 'PUT /api/agent/workspace/mutations failed',
+                  retryable: false,
+                });
+              }
+            },
+          );
+        }
+        setProposalDecisions((prev) => ({
+          ...prev,
+          [decisionKey]: 'approved',
+        }));
+        clearError();
+        const approvalText = `Approved budget shift from ${proposal.fromCampaignName || proposal.fromCampaign} to ${proposal.toCampaignName || proposal.toCampaign}.`;
+        lastTierHintRef.current = 'reasoning';
+        lastUserPromptRef.current = approvalText;
+        void sendMessage(
+          { text: approvalText },
+          {
+            body: {
+              tierHint: 'reasoning',
+              twinMutations: mutations,
+              injectFailure: false,
+            },
+          },
+        );
+      } catch (err) {
+        setBackendAlert({
+          id: `realloc-err-${Date.now()}`,
+          severity: 'error',
+          title: 'COULD NOT APPLY BUDGET SHIFT',
+          message:
+            'The backend rejected or failed to save this budget shift. No budgets were changed.',
+          technicalDetail: err instanceof Error ? err.message : String(err),
+          retryable: false,
+        });
+      }
     },
     [clearError, sendMessage],
   );
@@ -663,10 +822,13 @@ export function WorkspaceClient({
   );
 
   const handleResetDemo = useCallback(async () => {
+    userStoppedRef.current = true;
     void stop();
     lastTierHintRef.current = null;
     lastUserPromptRef.current = '';
     clearError();
+    setBackendAlert(null);
+    setSyncWarning(null);
     setMessages([]);
     clearStoredChatMessages();
     setProposalDecisions({});
@@ -741,6 +903,7 @@ export function WorkspaceClient({
         return;
       }
       clearError();
+      setBackendAlert(null);
       setWorkflowsOpen(false);
       setPlaybooksExpanded(false);
       lastTierHintRef.current = tierHint;
@@ -1172,13 +1335,18 @@ export function WorkspaceClient({
                 const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
                 const turnTelemetry: TelemetryData[] = [];
                 let latestAgentStatusLabel: string | null = null;
+                let wasTruncated = false;
                 for (const part of message.parts) {
                   if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
                     sandboxStatusByCallId[part.data.toolCallId] = part.data;
                   } else if (part.type === 'data-telemetry' && part.data) {
                     turnTelemetry.push(part.data);
                   } else if (part.type === 'data-agent-status' && part.data?.label) {
-                    latestAgentStatusLabel = part.data.label;
+                    if (part.data.phase === 'truncated') {
+                      wasTruncated = true;
+                    } else {
+                      latestAgentStatusLabel = part.data.label;
+                    }
                   }
                 }
 
@@ -1195,6 +1363,30 @@ export function WorkspaceClient({
                   : [];
 
                 if (renderedParts.length === 0 && !isStreaming) {
+                  if (isLastMessage && !error && !backendAlert) {
+                    return (
+                      <article
+                        key={message.id}
+                        className="message-turn message-assistant"
+                        data-message-role="assistant"
+                      >
+                        <BackendAlertBanner
+                          alert={{
+                            id: `empty-${message.id}`,
+                            severity: 'error',
+                            title: 'NO RESPONSE RECEIVED',
+                            message:
+                              'Relay did not return a reply for your last request. Click Retry to run it again.',
+                            technicalDetail: 'Assistant turn completed with 0 rendered parts',
+                            retryable: true,
+                          }}
+                          architectMode={architectMode}
+                          onRetry={handleRetry}
+                          testId="unanswered-turn-alert"
+                        />
+                      </article>
+                    );
+                  }
                   return null;
                 }
 
@@ -1211,6 +1403,30 @@ export function WorkspaceClient({
                     {renderedParts.length > 0 ? (
                       <div className="assistant-parts-stack">
                         {renderedParts}
+                        {wasTruncated && !isStreaming ? (
+                          <div
+                            className="truncated-notice-bar"
+                            role="status"
+                            data-testid="truncated-response-notice"
+                          >
+                            <span>
+                              This response reached the length limit and was cut short.
+                            </span>
+                            <button
+                              type="button"
+                              className="next-step-pill-btn"
+                              onClick={() =>
+                                handleWorkflowPromptAction(
+                                  'Please continue your previous response from where it left off.',
+                                  lastTierHintRef.current ?? 'fast',
+                                )
+                              }
+                            >
+                              <span>Continue response</span>
+                              <span aria-hidden="true">→</span>
+                            </button>
+                          </div>
+                        ) : null}
                         {showActiveStatus ? (
                           <div
                             className="assistant-streaming-placeholder"
@@ -1264,11 +1480,61 @@ export function WorkspaceClient({
                   </div>
                 </article>
               ) : null}
+
+              {!isStreaming &&
+              !error &&
+              !backendAlert &&
+              messages.length > 0 &&
+              messages[messages.length - 1]?.role === 'user' ? (
+                <article
+                  className="message-turn message-assistant"
+                  data-message-role="assistant"
+                >
+                  <BackendAlertBanner
+                    alert={{
+                      id: `unanswered-${messages[messages.length - 1].id}`,
+                      severity: 'error',
+                      title: 'NO RESPONSE RECEIVED',
+                      message:
+                        'Relay did not return a reply for your last request. Click Retry to try again.',
+                      technicalDetail: 'Stream finished with no assistant message',
+                      retryable: true,
+                    }}
+                    architectMode={architectMode}
+                    onRetry={handleRetry}
+                    testId="unanswered-turn-alert"
+                  />
+                </article>
+              ) : null}
             </section>
           </>
         )}
 
-        {error ? (
+        {syncWarning ? (
+          <BackendAlertBanner
+            alert={syncWarning}
+            architectMode={architectMode}
+            onDismiss={() => setSyncWarning(null)}
+            testId="sync-warning-banner"
+          />
+        ) : null}
+
+        {backendAlert ? (
+          <BackendAlertBanner
+            alert={backendAlert}
+            architectMode={architectMode}
+            onRetry={backendAlert.retryable ? handleRetry : undefined}
+            onDismiss={() => {
+              setBackendAlert(null);
+              clearError();
+            }}
+            testId={
+              backendAlert.title === 'SETUP REQUIRED'
+                ? 'setup-error-card'
+                : 'stream-error-card'
+            }
+          />
+        ) : error ? (
           <section
             className={`error-card${isMissingCredentialError ? ' setup-card' : ''}`}
             role="alert"
@@ -1307,7 +1573,10 @@ export function WorkspaceClient({
         architectMode={architectMode}
         onChange={handleComposerChange}
         onSubmit={handleComposerSubmit}
-        onStop={() => void stop()}
+        onStop={() => {
+          userStoppedRef.current = true;
+          void stop();
+        }}
       />
 
       <ShareModal

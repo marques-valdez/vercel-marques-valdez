@@ -124,9 +124,9 @@ export async function syncWorkspaceMutations(
 export async function syncWorkspaceWorkflows(
   workspaceId: string,
   workflows: SavedWorkflowRecord[],
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await fetch('/api/agent/workspace/workflows', {
+    const response = await fetch('/api/agent/workspace/workflows', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -134,17 +134,18 @@ export async function syncWorkspaceWorkflows(
       },
       body: JSON.stringify({ workflows }),
     });
+    return response.ok;
   } catch {
-    // Non-fatal: localStorage retains local copy
+    return false;
   }
 }
 
 export async function syncWorkspaceMessages(
   workspaceId: string,
   messages: RelayUIMessage[],
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await fetch('/api/agent/workspace/messages', {
+    const response = await fetch('/api/agent/workspace/messages', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -152,20 +153,22 @@ export async function syncWorkspaceMessages(
       },
       body: JSON.stringify({ messages: messages.slice(-30) }),
     });
+    return response.ok;
   } catch {
-    // Non-fatal: localStorage retains local copy
+    return false;
   }
 }
 
-export async function resetRemoteWorkspace(workspaceId: string): Promise<void> {
+export async function resetRemoteWorkspace(workspaceId: string): Promise<boolean> {
   try {
-    await fetch('/api/agent/workspace', {
+    const response = await fetch('/api/agent/workspace', {
       method: 'DELETE',
       headers: {
         'X-Relay-Workspace': workspaceId,
       },
     });
+    return response.ok;
   } catch {
-    // Non-fatal: local reset still completes
+    return false;
   }
 }

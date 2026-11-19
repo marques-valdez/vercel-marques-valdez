@@ -2493,6 +2493,36 @@ textarea {
   cursor: not-allowed;
 }
 
+.backend-alert-warning {
+  border-color: #D97706;
+  background-color: #FFFFFF;
+}
+
+.warning-eyebrow {
+  color: #B45309;
+}
+
+.backend-alert-tech {
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
+  color: #666666;
+}
+
+.truncated-notice-bar {
+  margin-top: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid #D97706;
+  background-color: #FAFAFA;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+  color: #171717;
+}
+
 /* ReallocationCard 30-day Monte Carlo Forecast Band */
 .forecast-band {
   margin-top: 0.75rem;

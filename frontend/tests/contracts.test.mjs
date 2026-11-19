@@ -1368,3 +1368,47 @@ test('WorkflowNextSteps renders deep-dive hygiene and budget-shift pills for act
   assert.equal(healthyHtml.includes('Compare channel spend &amp; ROAS'), true);
   assert.equal(healthyHtml.includes('next-step-hygiene-pill'), false);
 });
+
+test('BackendAlertBanner and buildHttpErrorAlert translate 429/422/504 and render Retry/Dismiss', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { BackendAlertBanner, buildHttpErrorAlert } = loadTsModule(
+    'components/BackendAlertBanner.tsx',
+  );
+
+  const rateLimit = buildHttpErrorAlert(
+    429,
+    JSON.stringify({ detail: 'Rate limit exceeded' }),
+  );
+  assert.equal(rateLimit.severity, 'warning');
+  assert.equal(rateLimit.title, 'RATE LIMIT REACHED');
+  assert.equal(rateLimit.retryable, true);
+
+  const timeout = buildHttpErrorAlert(504, '<html>Gateway Timeout</html>');
+  assert.equal(timeout.severity, 'error');
+  assert.equal(timeout.title, 'SERVICE TEMPORARILY UNAVAILABLE');
+  assert.equal(timeout.technicalDetail, 'HTTP 504');
+
+  const customerHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(BackendAlertBanner, {
+      alert: timeout,
+      architectMode: false,
+      onRetry: () => {},
+      onDismiss: () => {},
+    }),
+  );
+  assert.equal(customerHtml.includes('SERVICE TEMPORARILY UNAVAILABLE'), true);
+  assert.equal(customerHtml.includes('Retry'), true);
+  assert.equal(customerHtml.includes('Dismiss'), true);
+  assert.equal(customerHtml.includes('HTTP 504'), false);
+
+  const xrayHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(BackendAlertBanner, {
+      alert: timeout,
+      architectMode: true,
+      onRetry: () => {},
+      onDismiss: () => {},
+    }),
+  );
+  assert.equal(xrayHtml.includes('HTTP 504'), true);
+});

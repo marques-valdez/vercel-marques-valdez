@@ -53,7 +53,7 @@ from app.twin import DerivedTwinState, Mutation, compute_twin_state
 
 AI_GATEWAY_BASE_URL: Final[str] = "https://ai-gateway.vercel.sh/v1"
 MAX_MODEL_CALLS: Final[int] = 6
-MAX_OUTPUT_TOKENS: Final[int] = 1200
+MAX_OUTPUT_TOKENS: Final[int] = 2048
 
 FailoverMode = Literal["none", "gateway", "simulated"]
 ModelFactory = Callable[[str, Sequence[str]], BaseChatModel]
@@ -460,6 +460,20 @@ def build_agent_graph(
                 "model_calls": state["model_calls"] + 1,
                 "pending_telemetry": telemetry,
             }
+
+        finish_reason = str(
+            merged_meta.get("finish_reason") or merged_meta.get("stop_reason") or ""
+        ).strip().lower()
+        if finish_reason in ("length", "max_tokens"):
+            writer(
+                {
+                    "kind": "agent_status",
+                    "data": {
+                        "phase": "truncated",
+                        "label": "Response reached the length limit and was cut short.",
+                    },
+                }
+            )
 
         writer({"kind": "telemetry", "data": telemetry})
         writer({"kind": "step_finish"})
