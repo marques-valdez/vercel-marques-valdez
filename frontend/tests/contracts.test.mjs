@@ -1770,3 +1770,66 @@ test('use-chat-scroll decision logic pins new user prompts, skips hydration and 
     { visible: true, label: 'New reply', isStreaming: true },
   );
 });
+
+
+test('AgentProgressCard renders live step checklist with 4-dot spinner, elapsed timer, and collapsed summary when settled', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const {
+    AgentProgressCard,
+    finalizeProgressSteps,
+    formatElapsedSeconds,
+    splitFocusHeadline,
+  } = loadTsModule('components/AgentProgressCard.tsx');
+
+  assert.equal(formatElapsedSeconds(0), '0s');
+  assert.equal(formatElapsedSeconds(22), '22s');
+  assert.equal(formatElapsedSeconds(65), '1m 05s');
+  assert.deepEqual(splitFocusHeadline('Auditing landing pages for 404 links…'), {
+    lead: 'Auditing',
+    rest: ' landing pages for 404 links',
+  });
+
+  const liveSteps = [
+    { id: 'plan', title: 'Review request & live campaigns', status: 'done' },
+    { id: 'tool:1', title: 'Audit landing pages & UTM tags', status: 'in_progress' },
+    { id: 'tool:2', title: 'Simulate budget shift & 30-day forecast', status: 'pending' },
+    { id: 'synthesize', title: 'Summarize findings & next steps', status: 'pending' },
+  ];
+
+  const liveHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(AgentProgressCard, {
+      steps: liveSteps,
+      focus: 'Auditing landing pages for 404 links and UTM tracking gaps',
+      isStreaming: true,
+      startedAtMs: Date.now() - 8000,
+    }),
+  );
+  assert.equal(liveHtml.includes('agent-progress-steps'), true);
+  assert.equal(liveHtml.includes('agent-dots-spinner'), true);
+  assert.equal(liveHtml.includes('agent-step-circle'), true);
+  assert.equal(liveHtml.includes('aria-expanded="true"'), true);
+  assert.equal(liveHtml.includes('Auditing'), true);
+  assert.equal(liveHtml.includes('Audit landing pages &amp; UTM tags'), true);
+
+  const settledSteps = finalizeProgressSteps(liveSteps, false, false);
+  assert.equal(settledSteps.every((s) => s.status === 'done'), true);
+
+  const erroredSteps = finalizeProgressSteps(liveSteps, false, true);
+  assert.equal(erroredSteps[1].status, 'failed');
+  assert.equal(erroredSteps[2].status, 'pending');
+
+  const doneHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(AgentProgressCard, {
+      steps: liveSteps,
+      focus: 'Summarizing findings and next steps',
+      isStreaming: false,
+      completedDurationMs: 4200,
+    }),
+  );
+  assert.equal(doneHtml.includes('agent-progress-steps'), false);
+  assert.equal(doneHtml.includes('aria-expanded="false"'), true);
+  assert.equal(doneHtml.includes('Completed'), true);
+  assert.equal(doneHtml.includes('4 steps'), true);
+  assert.equal(doneHtml.includes('4s'), true);
+});

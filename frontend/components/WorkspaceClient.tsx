@@ -21,6 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
+import { AgentProgressCard, OPTIMISTIC_SUBMIT_STEPS } from './AgentProgressCard';
 import { BackendAlertBanner, buildHttpErrorAlert } from './BackendAlertBanner';
 import { ChannelHealthStrip } from './ChannelHealthStrip';
 import { Composer } from './Composer';
@@ -67,6 +68,7 @@ import {
   syncWorkspaceWorkflows,
 } from '@/lib/workspace-store';
 import type {
+  AgentStatusData,
   BackendAlert,
   ChannelDelta,
   DerivedTwinState,
@@ -501,6 +503,15 @@ export function WorkspaceClient({
 
   const isStreaming = status === 'submitted' || status === 'streaming';
   const [isHydratingChat, setIsHydratingChat] = useState(true);
+  const [activeTurnStartMs, setActiveTurnStartMs] = useState<number | null>(null);
+  const prevIsStreamingRef = useRef(false);
+
+  useEffect(() => {
+    if (isStreaming && !prevIsStreamingRef.current) {
+      setActiveTurnStartMs(Date.now());
+    }
+    prevIsStreamingRef.current = isStreaming;
+  }, [isStreaming]);
 
   const {
     latestUserRef,
@@ -1365,7 +1376,7 @@ export function WorkspaceClient({
 
                   const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
                   const turnTelemetry: TelemetryData[] = [];
-                  let latestAgentStatusLabel: string | null = null;
+                  let latestAgentStatus: AgentStatusData | null = null;
                   let wasTruncated = false;
                   for (const part of message.parts) {
                     if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
@@ -1376,7 +1387,7 @@ export function WorkspaceClient({
                       if (part.data.phase === 'truncated') {
                         wasTruncated = true;
                       } else {
-                        latestAgentStatusLabel = part.data.label;
+                        latestAgentStatus = part.data;
                       }
                     }
                   }
@@ -1422,8 +1433,22 @@ export function WorkspaceClient({
                   }
 
                   const showActiveStatus = isStreaming && isLastMessage;
-                  const activeStatusText =
-                    latestAgentStatusLabel || 'Reviewing your active campaigns…';
+                  const progressSteps =
+                    latestAgentStatus?.steps && latestAgentStatus.steps.length > 0
+                      ? latestAgentStatus.steps
+                      : OPTIMISTIC_SUBMIT_STEPS;
+                  const activeFocusText =
+                    latestAgentStatus?.focus ||
+                    latestAgentStatus?.label ||
+                    'Reviewing your active campaigns';
+                  const showProgressCard =
+                    showActiveStatus ||
+                    Boolean(latestAgentStatus?.steps && latestAgentStatus.steps.length > 0);
+                  const totalTelemetryMs = turnTelemetry.reduce(
+                    (sum, entry) =>
+                      sum + (Number.isFinite(entry.latencyMs) ? entry.latencyMs : 0),
+                    0,
+                  );
 
                   return (
                     <article
@@ -1431,67 +1456,65 @@ export function WorkspaceClient({
                       className="message-turn message-assistant"
                       data-message-role="assistant"
                     >
-                      {renderedParts.length > 0 ? (
-                        <div className="assistant-parts-stack">
-                          {renderedParts}
-                          {wasTruncated && !isStreaming ? (
-                            <div
-                              className="truncated-notice-bar"
-                              role="status"
-                              data-testid="truncated-response-notice"
+                      <div className="assistant-parts-stack">
+                        {showProgressCard ? (
+                          <AgentProgressCard
+                            steps={progressSteps}
+                            focus={activeFocusText}
+                            isStreaming={showActiveStatus}
+                            hasError={Boolean(isLastMessage && (error || backendAlert))}
+                            startedAtMs={showActiveStatus ? activeTurnStartMs : null}
+                            completedDurationMs={
+                              !showActiveStatus && totalTelemetryMs > 0
+                                ? totalTelemetryMs
+                                : null
+                            }
+                            testId="agent-activity-status"
+                          />
+                        ) : null}
+
+                        {renderedParts}
+
+                        {wasTruncated && !isStreaming ? (
+                          <div
+                            className="truncated-notice-bar"
+                            role="status"
+                            data-testid="truncated-response-notice"
+                          >
+                            <span>
+                              This response reached the length limit and was cut short.
+                            </span>
+                            <button
+                              type="button"
+                              className="next-step-pill-btn"
+                              onClick={() =>
+                                handleWorkflowPromptAction(
+                                  'Please continue your previous response from where it left off.',
+                                  lastTierHintRef.current ?? 'fast',
+                                )
+                              }
                             >
-                              <span>
-                                This response reached the length limit and was cut short.
-                              </span>
-                              <button
-                                type="button"
-                                className="next-step-pill-btn"
-                                onClick={() =>
-                                  handleWorkflowPromptAction(
-                                    'Please continue your previous response from where it left off.',
-                                    lastTierHintRef.current ?? 'fast',
-                                  )
-                                }
-                              >
-                                <span>Continue response</span>
-                                <span aria-hidden="true">→</span>
-                              </button>
-                            </div>
-                          ) : null}
-                          {showActiveStatus ? (
-                            <div
-                              className="assistant-streaming-placeholder"
-                              aria-live="polite"
-                              data-testid="agent-activity-status"
-                            >
-                              <span className="agent-activity-dot" aria-hidden="true" />
-                              <span>{activeStatusText}</span>
-                            </div>
-                          ) : null}
-                          {architectMode && turnTelemetry.length > 0 ? (
-                            <TelemetryStrip
-                              entries={turnTelemetry}
-                              onOpenFinOps={() => handleOpenInspectorFromStrip('runtime')}
-                            />
-                          ) : null}
-                          {architectMode && capturedFrames.length > 0 ? (
-                            <ProtocolXRay
-                              frames={capturedFrames}
-                              uiStreamSource={uiStreamSource}
-                              defaultOpen={autoOpenXRayKey === message.id}
-                            />
-                          ) : null}
-                        </div>
-                      ) : showActiveStatus ? (
-                        <div
-                          className="assistant-streaming-placeholder"
-                          aria-live="polite"
-                          data-testid="agent-activity-status"
-                        >
-                          <span className="agent-activity-dot" aria-hidden="true" />
-                          <span>{activeStatusText}</span>
-                        </div>
-                      ) : null}
+                              <span>Continue response</span>
+                              <span aria-hidden="true">→</span>
+                            </button>
+                          </div>
+                        ) : null}
+
+                        {architectMode && turnTelemetry.length > 0 ? (
+                          <TelemetryStrip
+                            entries={turnTelemetry}
+                            onOpenFinOps={() => handleOpenInspectorFromStrip('runtime')}
+                          />
+                        ) : null}
+
+                        {architectMode && capturedFrames.length > 0 ? (
+                          <ProtocolXRay
+                            frames={capturedFrames}
+                            uiStreamSource={uiStreamSource}
+                            defaultOpen={autoOpenXRayKey === message.id}
+                          />
+                        ) : null}
+                      </div>
                     </article>
                   );
                 };
@@ -1519,14 +1542,13 @@ export function WorkspaceClient({
                           className="message-turn message-assistant"
                           data-message-role="assistant"
                         >
-                          <div
-                            className="assistant-streaming-placeholder"
-                            aria-live="polite"
-                            data-testid="agent-activity-status"
-                          >
-                            <span className="agent-activity-dot" aria-hidden="true" />
-                            <span>Connecting to Relay and reviewing your campaigns…</span>
-                          </div>
+                          <AgentProgressCard
+                            steps={OPTIMISTIC_SUBMIT_STEPS}
+                            focus="Connecting to Relay and reviewing your campaigns"
+                            isStreaming
+                            startedAtMs={activeTurnStartMs}
+                            testId="agent-activity-status"
+                          />
                         </article>
                       ) : null}
 
@@ -1555,12 +1577,13 @@ export function WorkspaceClient({
                           />
                         </article>
                       ) : null}
+
+                      <div
+                        ref={endSentinelRef}
+                        className="conversation-end-sentinel"
+                        aria-hidden="true"
+                      />
                     </div>
-                    <div
-                      ref={endSentinelRef}
-                      className="conversation-end-sentinel"
-                      aria-hidden="true"
-                    />
                   </>
                 );
               })()}

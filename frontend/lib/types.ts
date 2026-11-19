@@ -123,9 +123,19 @@ export interface SandboxStatusData {
   label: string;
 }
 
+export type AgentProgressStepStatus = 'pending' | 'in_progress' | 'done' | 'failed';
+
+export interface AgentProgressStep {
+  id: string;
+  title: string;
+  status: AgentProgressStepStatus;
+}
+
 export interface AgentStatusData {
   phase: 'connecting' | 'planning' | 'tool' | 'synthesizing' | 'truncated';
   label: string;
+  focus?: string;
+  steps?: AgentProgressStep[];
 }
 
 export interface BackendAlert {

@@ -1584,3 +1584,84 @@ def test_direct_sandbox_query_endpoint_runs_all_templates_and_validates_inputs()
 
     wrong_method = client.get("/api/agent/sandbox/query")
     assert wrong_method.status_code == 405
+
+
+
+def test_agent_status_emits_reconciled_turn_progress_steps_across_multi_tool_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-gateway-key")
+    app.state.model_factory = _make_model_factory(
+        [
+            ScriptedStep(
+                text_deltas=(),
+                tool_calls=[
+                    {
+                        "id": "call_hyg_seq",
+                        "name": "audit_campaign_hygiene",
+                        "args": {},
+                    },
+                    {
+                        "id": "call_wf_seq",
+                        "name": "compile_workflow",
+                        "args": {"channels": ["google_ads"], "threshold": 15},
+                    },
+                ],
+            ),
+            ScriptedStep(
+                text_deltas=("Completed audit and compiled recurring check.",),
+            ),
+        ]
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/agent/chat",
+        json={
+            "messages": [{"role": "user", "content": "Audit links and set up a check"}],
+            "tierHint": "fast",
+        },
+    )
+    assert resp.status_code == 200
+    frames, saw_done = _parse_sse_body(resp.text)
+    assert saw_done is True
+
+    progress_frames = [
+        f for f in frames if f.get("type") == "data-agent-status"
+    ]
+    assert len(progress_frames) == 4
+    assert all(f.get("id") == "turn-progress" for f in progress_frames)
+
+    # 1. Planning: plan in_progress, synthesize pending
+    plan_steps = progress_frames[0]["data"]["steps"]
+    assert [s["status"] for s in plan_steps] == ["in_progress", "pending"]
+    assert progress_frames[0]["data"]["focus"]
+
+    # 2. Tool 1 running: plan done, tool 1 in_progress, tool 2 pending, synthesize pending
+    t1_steps = progress_frames[1]["data"]["steps"]
+    assert [s["status"] for s in t1_steps] == [
+        "done",
+        "in_progress",
+        "pending",
+        "pending",
+    ]
+    assert t1_steps[1]["title"] == "Audit landing pages & UTM tags"
+    assert t1_steps[2]["title"] == "Build recurring campaign check"
+
+    # 3. Tool 2 running: plan done, tool 1 done, tool 2 in_progress, synthesize pending
+    t2_steps = progress_frames[2]["data"]["steps"]
+    assert [s["status"] for s in t2_steps] == [
+        "done",
+        "done",
+        "in_progress",
+        "pending",
+    ]
+
+    # 4. Synthesizing: plan done, both tools done, synthesize in_progress
+    synth_steps = progress_frames[3]["data"]["steps"]
+    assert [s["status"] for s in synth_steps] == [
+        "done",
+        "done",
+        "done",
+        "in_progress",
+    ]

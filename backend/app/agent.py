@@ -66,6 +66,13 @@ _TOOL_STATUS_LABELS: Final[dict[str, str]] = {
     "compile_workflow": "Building 6-step workflow and morning brief…",
 }
 
+_TOOL_STEP_TITLES: Final[dict[str, str]] = {
+    "audit_campaign_hygiene": "Audit landing pages & UTM tags",
+    "analyze_in_sandbox": "Analyze channel spend, pipeline & ROAS",
+    "propose_budget_reallocation": "Simulate budget shift & 30-day forecast",
+    "compile_workflow": "Build recurring campaign check",
+}
+
 
 class SyntheticPrimaryOutageError(RuntimeError):
     """Synthetic HTTP 503 raised locally when injectFailure is enabled."""
@@ -282,6 +289,28 @@ def build_agent_graph(
     tool_map = {t.name: t for t in tools}
     factory: ModelFactory = model_factory if model_factory is not None else build_model
     is_live_gateway = model_factory is None
+    progress_steps: list[dict[str, str]] = []
+
+    def _snapshot_steps() -> list[dict[str, str]]:
+        return [dict(step) for step in progress_steps]
+
+    def _set_step_status(step_id: str, next_status: str) -> None:
+        for step in progress_steps:
+            if step["id"] == step_id:
+                step["status"] = next_status
+                return
+
+    def _insert_tool_step(step_id: str, title: str) -> None:
+        if any(step["id"] == step_id for step in progress_steps):
+            return
+        synth_idx = next(
+            (i for i, s in enumerate(progress_steps) if s["id"] == "synthesize"),
+            len(progress_steps),
+        )
+        progress_steps.insert(
+            synth_idx,
+            {"id": step_id, "title": title, "status": "pending"},
+        )
 
     async def model_node(state: AgentState) -> dict[str, Any]:
         if state["model_calls"] >= MAX_MODEL_CALLS:
@@ -292,20 +321,42 @@ def build_agent_graph(
 
         writer = get_stream_writer()
         writer({"kind": "step_start"})
+        if state["model_calls"] == 0:
+            progress_steps[:] = [
+                {
+                    "id": "plan",
+                    "title": "Review request & live campaigns",
+                    "status": "in_progress",
+                },
+                {
+                    "id": "synthesize",
+                    "title": "Summarize findings & next steps",
+                    "status": "pending",
+                },
+            ]
+            status_payload: dict[str, Any] = {
+                "phase": "planning",
+                "label": "Reviewing your active campaigns…",
+                "focus": "Reviewing your active campaigns and budgets",
+                "steps": _snapshot_steps(),
+            }
+        else:
+            for step in progress_steps:
+                if step["status"] == "in_progress":
+                    step["status"] = "done"
+            _set_step_status("plan", "done")
+            _set_step_status("synthesize", "in_progress")
+            status_payload = {
+                "phase": "synthesizing",
+                "label": "Summarizing findings and next steps…",
+                "focus": "Summarizing findings and next steps",
+                "steps": _snapshot_steps(),
+            }
         writer(
             {
                 "kind": "agent_status",
-                "data": (
-                    {
-                        "phase": "planning",
-                        "label": "Reviewing your active campaigns…",
-                    }
-                    if state["model_calls"] == 0
-                    else {
-                        "phase": "synthesizing",
-                        "label": "Summarizing findings and next steps…",
-                    }
-                ),
+                "id": "turn-progress",
+                "data": status_payload,
             }
         )
 
@@ -468,6 +519,7 @@ def build_agent_graph(
             writer(
                 {
                     "kind": "agent_status",
+                    "id": "turn-truncated",
                     "data": {
                         "phase": "truncated",
                         "label": "Response reached the length limit and was cut short.",
@@ -489,12 +541,27 @@ def build_agent_graph(
         tool_calls = getattr(last_msg, "tool_calls", None) or []
         tool_messages: list[ToolMessage] = []
 
+        _set_step_status("plan", "done")
+        for step in progress_steps:
+            if step["status"] == "in_progress":
+                step["status"] = "done"
+
+        for tc in tool_calls:
+            cid = str(tc["id"])
+            tname = str(tc["name"])
+            _insert_tool_step(
+                f"tool:{cid}",
+                _TOOL_STEP_TITLES.get(tname, tname.replace("_", " ").capitalize()),
+            )
+
         for tc in tool_calls:
             call_id = str(tc["id"])
             tool_name = str(tc["name"])
+            step_id = f"tool:{call_id}"
             tool_args = tc.get("args") if isinstance(tc.get("args"), Mapping) else {}
             target_tool = tool_map.get(tool_name)
             if target_tool is None:
+                _set_step_status(step_id, "failed")
                 err_msg = f"Unknown tool requested: {tool_name}"
                 writer(
                     {
@@ -514,14 +581,19 @@ def build_agent_graph(
                 continue
 
             try:
+                _set_step_status(step_id, "in_progress")
+                status_label = _TOOL_STATUS_LABELS.get(
+                    tool_name, f"Running {tool_name}…"
+                )
                 writer(
                     {
                         "kind": "agent_status",
+                        "id": "turn-progress",
                         "data": {
                             "phase": "tool",
-                            "label": _TOOL_STATUS_LABELS.get(
-                                tool_name, f"Running {tool_name}…"
-                            ),
+                            "label": status_label,
+                            "focus": status_label.rstrip("…"),
+                            "steps": _snapshot_steps(),
                         },
                     }
                 )
@@ -568,6 +640,7 @@ def build_agent_graph(
                         }
                     )
                 result = await target_tool.ainvoke(dict(tool_args))
+                _set_step_status(step_id, "done")
                 writer(
                     {
                         "kind": "tool_output",
@@ -598,6 +671,7 @@ def build_agent_graph(
                     )
                 )
             except (ValidationError, ValueError, KeyError, TypeError, ToolException, RuntimeError) as exc:
+                _set_step_status(step_id, "failed")
                 err_text = str(exc) or f"Tool {tool_name} failed"
                 writer(
                     {

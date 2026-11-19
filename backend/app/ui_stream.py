@@ -149,9 +149,14 @@ async def stream_langgraph_to_sse(
                     )
 
                 elif kind == "agent_status":
-                    yield format_sse(
-                        {"type": "data-agent-status", "data": event["data"]}
-                    )
+                    status_frame: dict[str, Any] = {
+                        "type": "data-agent-status",
+                        "data": event["data"],
+                    }
+                    status_id = event.get("id")
+                    if isinstance(status_id, str) and status_id:
+                        status_frame["id"] = status_id
+                    yield format_sse(status_frame)
 
                 elif kind == "tool_output":
                     yield format_sse(
