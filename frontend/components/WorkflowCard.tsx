@@ -18,14 +18,23 @@ import {
   resolveValidWorkflowShareSlug,
   resolveWorkflowDagSteps,
 } from '@/lib/workflow-store';
-import type { WorkflowRunStepEvent, WorkflowToolOutput } from '@/lib/types';
+import type {
+  DerivedTwinState,
+  WorkflowDigestSummary,
+  WorkflowRunStepEvent,
+  WorkflowToolOutput,
+} from '@/lib/types';
+import { WorkflowNextSteps } from './WorkflowNextSteps';
 
 interface WorkflowCardProps {
   state: 'skeleton' | 'completed' | 'error';
   output?: WorkflowToolOutput;
   errorText?: string;
+  twinState?: DerivedTwinState | null;
+  disabled?: boolean;
   onShare: (slug: string) => void;
   onOpenInDrawer?: (workflowId: string) => void;
+  onRunNextStepPrompt?: (prompt: string, tierHint: 'fast' | 'reasoning') => void;
   onRetry: () => void;
 }
 
@@ -54,13 +63,19 @@ export function WorkflowCard({
   state,
   output,
   errorText,
+  twinState = null,
+  disabled = false,
   onShare,
   onOpenInDrawer,
+  onRunNextStepPrompt,
   onRetry,
 }: WorkflowCardProps) {
   const [runningDryRun, setRunningDryRun] = useState(false);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [digestPreview, setDigestPreview] = useState<string | null>(null);
+  const [digestSummary, setDigestSummary] = useState<WorkflowDigestSummary | null>(
+    null,
+  );
   const [stepStates, setStepStates] = useState<Record<string, StepRunState>>({});
   const dryRunAbortRef = useRef<AbortController | null>(null);
 
@@ -113,6 +128,7 @@ export function WorkflowCard({
     setRunningDryRun(true);
     setDryRunError(null);
     setDigestPreview(null);
+    setDigestSummary(null);
 
     const initialMap: Record<string, StepRunState> = {};
     orderedNodes.forEach((step, idx) => {
@@ -167,8 +183,13 @@ export function WorkflowCard({
             : normalizedEvtNode;
 
         const detailText = formatDetail(evt.detail);
-        if (resolvedIdx === orderedNodes.length - 1 && detailText) {
-          setDigestPreview(detailText);
+        if (resolvedIdx === orderedNodes.length - 1) {
+          if (detailText) {
+            setDigestPreview(detailText);
+          }
+          if (evt.summary && typeof evt.summary === 'object') {
+            setDigestSummary(evt.summary as unknown as WorkflowDigestSummary);
+          }
         }
 
         setStepStates((prev) => {
@@ -356,6 +377,17 @@ export function WorkflowCard({
           </div>
           <pre className="digest-preview-text">{digestPreview}</pre>
         </div>
+      ) : null}
+
+      {onRunNextStepPrompt ? (
+        <WorkflowNextSteps
+          channels={output.channels ?? []}
+          digestSummary={digestSummary}
+          twinState={twinState}
+          disabled={disabled || runningDryRun}
+          compact={!digestSummary}
+          onRunPrompt={onRunNextStepPrompt}
+        />
       ) : null}
 
       {dryRunError ? (

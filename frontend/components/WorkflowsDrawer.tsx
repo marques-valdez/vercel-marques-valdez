@@ -19,17 +19,26 @@ import {
   resolveValidWorkflowShareSlug,
   resolveWorkflowDagSteps,
 } from '@/lib/workflow-store';
-import type { SavedWorkflowRecord, WorkflowRunStepEvent } from '@/lib/types';
+import type {
+  DerivedTwinState,
+  SavedWorkflowRecord,
+  WorkflowDigestSummary,
+  WorkflowRunStepEvent,
+} from '@/lib/types';
 import { WorkflowDagView, type DagStepRunState } from './WorkflowDagView';
+import { WorkflowNextSteps } from './WorkflowNextSteps';
 
 interface WorkflowsDrawerProps {
   isOpen: boolean;
   workflows: SavedWorkflowRecord[];
   selectedWorkflowId: string | null;
+  twinState?: DerivedTwinState | null;
+  isStreaming?: boolean;
   onSelectWorkflow: (workflowId: string) => void;
   onRenameWorkflow: (workflowId: string, nextName: string) => void;
   onRemoveWorkflow: (workflowId: string) => void;
   onShareWorkflow: (slug: string) => void;
+  onRunNextStepPrompt?: (prompt: string, tierHint: 'fast' | 'reasoning') => void;
   onCompileSample: () => void;
   onClose: () => void;
 }
@@ -52,10 +61,13 @@ export function WorkflowsDrawer({
   isOpen,
   workflows,
   selectedWorkflowId,
+  twinState = null,
+  isStreaming = false,
   onSelectWorkflow,
   onRenameWorkflow,
   onRemoveWorkflow,
   onShareWorkflow,
+  onRunNextStepPrompt,
   onCompileSample,
   onClose,
 }: WorkflowsDrawerProps) {
@@ -67,6 +79,9 @@ export function WorkflowsDrawer({
   const [digestPreviewByWf, setDigestPreviewByWf] = useState<Record<string, string>>(
     {},
   );
+  const [digestSummaryByWf, setDigestSummaryByWf] = useState<
+    Record<string, WorkflowDigestSummary>
+  >({});
   const [stepStatesByWf, setStepStatesByWf] = useState<
     Record<string, Record<string, DagStepRunState>>
   >({});
@@ -107,6 +122,9 @@ export function WorkflowsDrawer({
   const activeWfId = activeWorkflow?.workflowId ?? '';
   const activeStepStates = activeWfId ? stepStatesByWf[activeWfId] ?? {} : {};
   const activeDigest = activeWfId ? digestPreviewByWf[activeWfId] ?? null : null;
+  const activeDigestSummary = activeWfId
+    ? digestSummaryByWf[activeWfId] ?? null
+    : null;
 
   const handleStartRename = (record: SavedWorkflowRecord) => {
     setEditingId(record.workflow.workflowId);
@@ -188,8 +206,16 @@ export function WorkflowsDrawer({
             : normalizedEvtNode;
 
         const detailText = formatDetail(evt.detail);
-        if (resolvedIdx === orderedNodes.length - 1 && detailText) {
-          setDigestPreviewByWf((prev) => ({ ...prev, [targetWfId]: detailText }));
+        if (resolvedIdx === orderedNodes.length - 1) {
+          if (detailText) {
+            setDigestPreviewByWf((prev) => ({ ...prev, [targetWfId]: detailText }));
+          }
+          if (evt.summary && typeof evt.summary === 'object') {
+            setDigestSummaryByWf((prev) => ({
+              ...prev,
+              [targetWfId]: evt.summary as unknown as WorkflowDigestSummary,
+            }));
+          }
         }
 
         setStepStatesByWf((prev) => {
@@ -558,6 +584,20 @@ export function WorkflowsDrawer({
                       </div>
                       <pre className="digest-preview-text">{activeDigest}</pre>
                     </div>
+                  ) : null}
+
+                  {onRunNextStepPrompt ? (
+                    <WorkflowNextSteps
+                      channels={activeWorkflow.channels ?? []}
+                      digestSummary={activeDigestSummary}
+                      twinState={twinState}
+                      disabled={Boolean(isStreaming || runningDryRun)}
+                      compact={!activeDigestSummary}
+                      onRunPrompt={(prompt, tierHint) => {
+                        onClose();
+                        onRunNextStepPrompt(prompt, tierHint);
+                      }}
+                    />
                   ) : null}
 
                   {dryRunError ? (

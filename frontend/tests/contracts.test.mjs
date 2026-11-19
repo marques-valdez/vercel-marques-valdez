@@ -1306,3 +1306,65 @@ test('ReallocationCard renders 30-day Monte Carlo P10/P50/P90 forecast band', as
   assert.equal(html.includes('+$11,100'), true);
   assert.equal(html.includes('6.2% marginal ROAS compression'), true);
 });
+
+test('WorkflowNextSteps renders deep-dive hygiene and budget-shift pills for active issues and healthy state', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { WorkflowNextSteps } = loadTsModule('components/WorkflowNextSteps.tsx');
+
+  const activeHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(WorkflowNextSteps, {
+      channels: ['google_ads', 'linkedin_ads'],
+      digestSummary: {
+        brokenCreatives: 7,
+        utmViolations: 4,
+        spendAtRiskPerDay: 920.5,
+        lowestRoasChannel: {
+          channel: 'LinkedIn Ads',
+          channelId: 'linkedin_ads',
+          roas: 1.5,
+        },
+        highestRoasChannel: {
+          channel: 'Google Ads',
+          channelId: 'google_ads',
+          roas: 4.2,
+        },
+      },
+      onRunPrompt: () => {},
+    }),
+  );
+
+  assert.equal(activeHtml.includes('RECOMMENDED NEXT STEPS'), true);
+  assert.equal(activeHtml.includes('Action needed · $920.50/day at risk'), true);
+  assert.equal(activeHtml.includes('Inspect &amp; fix 7 broken links &amp; 4 UTM tags'), true);
+  assert.equal(
+    activeHtml.includes('Shift spend from LinkedIn Ads (1.50x) to Google Ads (4.20x)'),
+    true,
+  );
+
+  const healthyHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(WorkflowNextSteps, {
+      channels: ['google_ads', 'linkedin_ads'],
+      digestSummary: {
+        brokenCreatives: 0,
+        utmViolations: 0,
+        spendAtRiskPerDay: 0,
+        lowestRoasChannel: {
+          channel: 'LinkedIn Ads',
+          channelId: 'linkedin_ads',
+          roas: 1.5,
+        },
+        highestRoasChannel: {
+          channel: 'Google Ads',
+          channelId: 'google_ads',
+          roas: 4.2,
+        },
+      },
+      onRunPrompt: () => {},
+    }),
+  );
+
+  assert.equal(healthyHtml.includes('All links &amp; UTMs healthy'), true);
+  assert.equal(healthyHtml.includes('Compare channel spend &amp; ROAS'), true);
+  assert.equal(healthyHtml.includes('next-step-hygiene-pill'), false);
+});

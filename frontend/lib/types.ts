@@ -227,6 +227,26 @@ export interface WorkflowToolOutput {
   temporalCode: string;
 }
 
+export interface WorkflowChannelRoasRef {
+  channel: string;
+  channelId: ChannelId;
+  roas: number;
+}
+
+export interface WorkflowDigestSummary {
+  previewText?: string;
+  delivery?: string;
+  brokenCreatives: number;
+  utmViolations: number;
+  spendAtRiskPerDay: number;
+  spendAtRiskPct?: number;
+  thresholdPct?: number;
+  gateTriggered?: boolean;
+  blendedRoas?: number;
+  lowestRoasChannel?: WorkflowChannelRoasRef | null;
+  highestRoasChannel?: WorkflowChannelRoasRef | null;
+}
+
 export interface WorkflowRunStepEvent {
   stepIndex?: number;
   node: string;

@@ -205,6 +205,13 @@ async def test_adv_workflow_two_channel_est_tokens_avoided_matches_scoped_table(
     assert step3_two["summary"]["estTokensAvoided"] > step3_three["summary"]["estTokensAvoided"]
     assert "Calculated spend, pipeline, and ROAS across 2 channels" in step3_two["detail"]
 
+    step5_three = frames_three[5]["summary"]
+    assert step5_three["gateTriggered"] is True
+    assert step5_three["thresholdPct"] == 20
+    assert step5_three["spendAtRiskPct"] > 0
+    assert step5_three["lowestRoasChannel"]["channelId"] == "linkedin_ads"
+    assert step5_three["highestRoasChannel"]["channelId"] == "google_ads"
+
 
 def test_adv_sandbox_budget_restore_cross_context_suppresses_value_error() -> None:
     """Restoring a ContextVar token across ASGI contexts on stream close must not raise ValueError."""

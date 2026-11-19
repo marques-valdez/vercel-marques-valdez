@@ -637,6 +637,16 @@ async def stream_workflow_dry_run(
             f"{ch.channel}: ${ch.dailyBudget:,.2f}/day ({ch.roas:.2f}x ROAS)"
             for ch in filtered_channels
         ]
+        lowest_ch = (
+            min(filtered_channels, key=lambda c: c.roas)
+            if len(filtered_channels) >= 2
+            else None
+        )
+        highest_ch = (
+            max(filtered_channels, key=lambda c: c.roas)
+            if len(filtered_channels) >= 2
+            else None
+        )
         preview_text = (
             f"[{WORKFLOW_TEMPLATES[resolved_cfg.template]}] "
             f"Blended ROAS {derived.totals.blendedRoas:.2f}x | "
@@ -659,7 +669,28 @@ async def stream_workflow_dry_run(
                     "brokenCreatives": active_broken,
                     "utmViolations": active_utm,
                     "spendAtRiskPerDay": active_risk,
+                    "spendAtRiskPct": risk_pct,
+                    "thresholdPct": resolved_cfg.threshold,
+                    "gateTriggered": gate_triggered,
                     "blendedRoas": derived.totals.blendedRoas,
+                    "lowestRoasChannel": (
+                        {
+                            "channel": lowest_ch.channel,
+                            "channelId": lowest_ch.channelId,
+                            "roas": lowest_ch.roas,
+                        }
+                        if lowest_ch is not None
+                        else None
+                    ),
+                    "highestRoasChannel": (
+                        {
+                            "channel": highest_ch.channel,
+                            "channelId": highest_ch.channelId,
+                            "roas": highest_ch.roas,
+                        }
+                        if highest_ch is not None
+                        else None
+                    ),
                 },
             }
         )

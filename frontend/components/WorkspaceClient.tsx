@@ -735,6 +735,32 @@ export function WorkspaceClient({
     }
   }, [handleSelectPlaybook]);
 
+  const handleWorkflowPromptAction = useCallback(
+    (prompt: string, tierHint: 'fast' | 'reasoning') => {
+      if (isStreaming || !prompt.trim()) {
+        return;
+      }
+      clearError();
+      setWorkflowsOpen(false);
+      setPlaybooksExpanded(false);
+      lastTierHintRef.current = tierHint;
+      lastUserPromptRef.current = prompt;
+      setPrimedTierHint(null);
+      setInput('');
+      void sendMessage(
+        { text: prompt },
+        {
+          body: {
+            tierHint,
+            twinMutations: readStoredMutations(),
+            injectFailure: architectModeRef.current && injectFailureRef.current,
+          },
+        },
+      );
+    },
+    [clearError, isStreaming, sendMessage],
+  );
+
   const handleToggleArchitectMode = useCallback(() => {
     setArchitectMode((prev) => {
       const next = !prev;
@@ -906,8 +932,11 @@ export function WorkspaceClient({
             state={cardState}
             output={part.state === 'output-available' ? part.output : undefined}
             errorText={part.state === 'output-error' ? part.errorText : undefined}
+            twinState={twinState}
+            disabled={isStreaming}
             onShare={handleOpenWorkflowShare}
             onOpenInDrawer={handleOpenWorkflowInDrawer}
+            onRunNextStepPrompt={handleWorkflowPromptAction}
             onRetry={handleRetry}
           />
         );
@@ -984,8 +1013,11 @@ export function WorkspaceClient({
                   : undefined
               }
               errorText={errText}
+              twinState={twinState}
+              disabled={isStreaming}
               onShare={handleOpenWorkflowShare}
               onOpenInDrawer={handleOpenWorkflowInDrawer}
+              onRunNextStepPrompt={handleWorkflowPromptAction}
               onRetry={handleRetry}
             />
           );
@@ -1288,10 +1320,13 @@ export function WorkspaceClient({
         isOpen={workflowsOpen}
         workflows={savedWorkflows}
         selectedWorkflowId={selectedWorkflowId}
+        twinState={twinState}
+        isStreaming={isStreaming}
         onSelectWorkflow={setSelectedWorkflowId}
         onRenameWorkflow={handleRenameWorkflow}
         onRemoveWorkflow={handleRemoveWorkflow}
         onShareWorkflow={handleOpenWorkflowShare}
+        onRunNextStepPrompt={handleWorkflowPromptAction}
         onCompileSample={handleCompileSampleWorkflow}
         onClose={() => setWorkflowsOpen(false)}
       />
