@@ -59,6 +59,14 @@ FailoverMode = Literal["none", "gateway", "simulated"]
 ModelFactory = Callable[[str, Sequence[str]], BaseChatModel]
 
 
+_TOOL_STATUS_LABELS: Final[dict[str, str]] = {
+    "audit_campaign_hygiene": "Auditing landing pages for 404 links and UTM tracking gaps…",
+    "analyze_in_sandbox": "Calculating channel spend, pipeline, and ROAS…",
+    "propose_budget_reallocation": "Simulating budget shift and expected ROAS impact…",
+    "compile_workflow": "Building 6-step workflow and morning brief…",
+}
+
+
 class SyntheticPrimaryOutageError(RuntimeError):
     """Synthetic HTTP 503 raised locally when injectFailure is enabled."""
 
@@ -284,6 +292,22 @@ def build_agent_graph(
 
         writer = get_stream_writer()
         writer({"kind": "step_start"})
+        writer(
+            {
+                "kind": "agent_status",
+                "data": (
+                    {
+                        "phase": "planning",
+                        "label": "Reviewing your active campaigns…",
+                    }
+                    if state["model_calls"] == 0
+                    else {
+                        "phase": "synthesizing",
+                        "label": "Summarizing findings and next steps…",
+                    }
+                ),
+            }
+        )
 
         t0 = time.perf_counter()
         # Inject a synthetic primary 503 outage locally when the X-Ray drill is
@@ -472,6 +496,17 @@ def build_agent_graph(
                 continue
 
             try:
+                writer(
+                    {
+                        "kind": "agent_status",
+                        "data": {
+                            "phase": "tool",
+                            "label": _TOOL_STATUS_LABELS.get(
+                                tool_name, f"Running {tool_name}…"
+                            ),
+                        },
+                    }
+                )
                 if tool_name == "analyze_in_sandbox":
                     writer(
                         {

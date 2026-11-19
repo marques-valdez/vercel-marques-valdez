@@ -570,9 +570,33 @@ textarea {
 }
 
 .assistant-streaming-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.8125rem;
   color: #666666;
   padding: 0.5rem 0;
+}
+
+.agent-activity-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: #0070F3;
+  flex-shrink: 0;
+  animation: agent-activity-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes agent-activity-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
 }
 
 /* Telemetry Strip */

@@ -148,6 +148,11 @@ async def stream_langgraph_to_sse(
                         {"type": "data-sandbox-status", "data": event["data"]}
                     )
 
+                elif kind == "agent_status":
+                    yield format_sse(
+                        {"type": "data-agent-status", "data": event["data"]}
+                    )
+
                 elif kind == "tool_output":
                     yield format_sse(
                         {

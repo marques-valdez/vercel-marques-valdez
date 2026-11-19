@@ -842,6 +842,7 @@ export function WorkspaceClient({
 
       case 'data-telemetry':
       case 'data-sandbox-status':
+      case 'data-agent-status':
       case 'step-start':
         return null;
 
@@ -1106,7 +1107,8 @@ export function WorkspaceClient({
               aria-label="Campaign assistant conversation"
               data-testid="conversation-stream"
             >
-              {messages.map((message) => {
+              {messages.map((message, msgIdx) => {
+                const isLastMessage = msgIdx === messages.length - 1;
                 if (message.role === 'user') {
                   const userText = message.parts
                     .filter(
@@ -1137,11 +1139,14 @@ export function WorkspaceClient({
 
                 const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
                 const turnTelemetry: TelemetryData[] = [];
+                let latestAgentStatusLabel: string | null = null;
                 for (const part of message.parts) {
                   if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
                     sandboxStatusByCallId[part.data.toolCallId] = part.data;
                   } else if (part.type === 'data-telemetry' && part.data) {
                     turnTelemetry.push(part.data);
+                  } else if (part.type === 'data-agent-status' && part.data?.label) {
+                    latestAgentStatusLabel = part.data.label;
                   }
                 }
 
@@ -1161,6 +1166,10 @@ export function WorkspaceClient({
                   return null;
                 }
 
+                const showActiveStatus = isStreaming && isLastMessage;
+                const activeStatusText =
+                  latestAgentStatusLabel || 'Reviewing your active campaigns…';
+
                 return (
                   <article
                     key={message.id}
@@ -1170,6 +1179,16 @@ export function WorkspaceClient({
                     {renderedParts.length > 0 ? (
                       <div className="assistant-parts-stack">
                         {renderedParts}
+                        {showActiveStatus ? (
+                          <div
+                            className="assistant-streaming-placeholder"
+                            aria-live="polite"
+                            data-testid="agent-activity-status"
+                          >
+                            <span className="agent-activity-dot" aria-hidden="true" />
+                            <span>{activeStatusText}</span>
+                          </div>
+                        ) : null}
                         {architectMode && turnTelemetry.length > 0 ? (
                           <TelemetryStrip
                             entries={turnTelemetry}
@@ -1184,17 +1203,35 @@ export function WorkspaceClient({
                           />
                         ) : null}
                       </div>
-                    ) : isStreaming ? (
+                    ) : showActiveStatus ? (
                       <div
                         className="assistant-streaming-placeholder"
                         aria-live="polite"
+                        data-testid="agent-activity-status"
                       >
-                        Reviewing your active campaigns…
+                        <span className="agent-activity-dot" aria-hidden="true" />
+                        <span>{activeStatusText}</span>
                       </div>
                     ) : null}
                   </article>
                 );
               })}
+
+              {isStreaming && messages[messages.length - 1]?.role === 'user' ? (
+                <article
+                  className="message-turn message-assistant"
+                  data-message-role="assistant"
+                >
+                  <div
+                    className="assistant-streaming-placeholder"
+                    aria-live="polite"
+                    data-testid="agent-activity-status"
+                  >
+                    <span className="agent-activity-dot" aria-hidden="true" />
+                    <span>Connecting to Relay and reviewing your campaigns…</span>
+                  </div>
+                </article>
+              ) : null}
             </section>
           </>
         )}

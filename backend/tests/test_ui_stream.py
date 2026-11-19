@@ -608,6 +608,7 @@ def test_golden_sse_text_only_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [f["type"] for f in frames] == [
         "start",
         "start-step",
+        "data-agent-status",
         "text-start",
         "text-delta",
         "text-delta",
@@ -618,12 +619,13 @@ def test_golden_sse_text_only_turn(monkeypatch: pytest.MonkeyPatch) -> None:
         "finish",
     ]
     assert frames[0]["messageId"].startswith("msg_")
-    txt_id = frames[2]["id"]
+    assert frames[2]["data"]["phase"] == "planning"
+    txt_id = frames[3]["id"]
     assert txt_id.startswith("txt_")
-    assert all(f["id"] == txt_id for f in frames[2:7])
-    assert "".join(f["delta"] for f in frames[3:6]) == "Campaign health looks solid."
+    assert all(f["id"] == txt_id for f in frames[3:8])
+    assert "".join(f["delta"] for f in frames[4:7]) == "Campaign health looks solid."
 
-    telemetry = frames[7]["data"]
+    telemetry = frames[8]["data"]
     assert set(telemetry.keys()) == EXPECTED_TELEMETRY_KEYS
     assert telemetry["tier"] == "fast"
     assert telemetry["routedBy"] == "card"
@@ -678,11 +680,14 @@ def test_golden_sse_single_tool_turn_zero_pre_text(
     assert [f["type"] for f in frames] == [
         "start",
         "start-step",
+        "data-agent-status",
         "tool-input-available",
+        "data-agent-status",
         "tool-output-available",
         "data-telemetry",
         "finish-step",
         "start-step",
+        "data-agent-status",
         "text-start",
         "text-delta",
         "text-end",
@@ -690,10 +695,11 @@ def test_golden_sse_single_tool_turn_zero_pre_text(
         "finish-step",
         "finish",
     ]
-    assert frames[2]["toolCallId"] == "call_hygiene_01"
-    assert frames[2]["toolName"] == "audit_campaign_hygiene"
     assert frames[3]["toolCallId"] == "call_hygiene_01"
-    output = frames[3]["output"]
+    assert frames[3]["toolName"] == "audit_campaign_hygiene"
+    assert frames[4]["data"]["phase"] == "tool"
+    assert frames[5]["toolCallId"] == "call_hygiene_01"
+    output = frames[5]["output"]
     assert output["brokenCount"] == 14
     assert output["utmCount"] == 9
     assert output["totalSpendAtRiskPerDay"] == 1567.4
@@ -754,10 +760,12 @@ def test_golden_sse_single_tool_turn_with_pre_text_and_all_four_tools(
     expected_types = [
         "start",
         "start-step",
+        "data-agent-status",
         "text-start",
         "text-delta",
         "text-end",
         "tool-input-available",
+        "data-agent-status",
     ]
     if tool_name in ("analyze_in_sandbox", "propose_budget_reallocation"):
         expected_types.extend(["data-sandbox-status", "data-sandbox-status"])
@@ -769,6 +777,7 @@ def test_golden_sse_single_tool_turn_with_pre_text_and_all_four_tools(
             "data-telemetry",
             "finish-step",
             "start-step",
+            "data-agent-status",
             "text-start",
             "text-delta",
             "text-end",
@@ -959,6 +968,7 @@ def test_golden_sse_mid_stream_model_exception_closes_cleanly_and_redacts(
     assert [f["type"] for f in frames] == [
         "start",
         "start-step",
+        "data-agent-status",
         "text-start",
         "text-delta",
         "text-end",
@@ -966,7 +976,7 @@ def test_golden_sse_mid_stream_model_exception_closes_cleanly_and_redacts(
         "error",
         "finish",
     ]
-    err_text = frames[6]["errorText"]
+    err_text = frames[7]["errorText"]
     assert "/var/tmp/relay-internal" not in err_text
     assert "sk-shortkey12" not in err_text
     assert "<redacted-path>" in err_text
@@ -993,11 +1003,12 @@ def test_golden_sse_turn_timeout_emits_error_part(
     assert [f["type"] for f in frames] == [
         "start",
         "start-step",
+        "data-agent-status",
         "finish-step",
         "error",
         "finish",
     ]
-    assert "time limit" in frames[3]["errorText"]
+    assert "time limit" in frames[4]["errorText"]
 
 
 async def test_client_disconnect_cancelled_error_propagates_cleanly() -> None:
@@ -1247,11 +1258,12 @@ def test_inject_failure_with_no_fallback_models_emits_clean_error_frame(
     assert [f["type"] for f in frames] == [
         "start",
         "start-step",
+        "data-agent-status",
         "finish-step",
         "error",
         "finish",
     ]
-    assert "Simulated 503 outage" in frames[3]["errorText"]
+    assert "Simulated 503 outage" in frames[4]["errorText"]
 
 
 async def test_concurrent_chat_requests_enforce_single_sandbox_across_parallel_and_sequential_steps(

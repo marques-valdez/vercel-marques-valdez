@@ -123,6 +123,11 @@ export interface SandboxStatusData {
   label: string;
 }
 
+export interface AgentStatusData {
+  phase: 'connecting' | 'planning' | 'tool' | 'synthesizing';
+  label: string;
+}
+
 export interface WireFrameRecord {
   id: string;
   offsetMs: number;
@@ -249,6 +254,7 @@ export interface TelemetryData {
 export type RelayDataParts = {
   telemetry: TelemetryData;
   'sandbox-status': SandboxStatusData;
+  'agent-status': AgentStatusData;
 };
 
 export type RelayUITools = {
