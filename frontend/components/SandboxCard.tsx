@@ -120,6 +120,7 @@ export function SandboxCard({
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [sliceLoading, setSliceLoading] = useState(false);
   const [sliceError, setSliceError] = useState<string | null>(null);
+  const [showAllRows, setShowAllRows] = useState(false);
 
   if (state === 'skeleton') {
     return (
@@ -166,6 +167,7 @@ export function SandboxCard({
     setSliceError(null);
     setActivePresetKey(preset.id);
     setActiveChannel(channel);
+    setShowAllRows(false);
     try {
       const response = await fetch('/api/agent/sandbox/query', {
         method: 'POST',
@@ -192,6 +194,9 @@ export function SandboxCard({
   };
 
   const rows = effectiveOutput.table ?? [];
+  const defaultVisibleRows = 6;
+  const hasMoreRows = rows.length > defaultVisibleRows;
+  const visibleRows = showAllRows ? rows : rows.slice(0, defaultVisibleRows);
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
   const isDailyAnomalyView =
     effectiveOutput.templateId === 'daily_pacing_anomalies' &&
@@ -298,7 +303,7 @@ export function SandboxCard({
         <DailyAnomalyChart rows={rows} />
       ) : barMetricColumn && labelColumn && rows.length > 0 ? (
         <div className="bar-chart-list tabular-nums" aria-label="Comparison bars">
-          {rows.map((row, idx) => {
+          {visibleRows.map((row, idx) => {
             const label = String(row[labelColumn] ?? `Row ${idx + 1}`);
             const rawVal = row[barMetricColumn];
             const numericVal =
@@ -340,6 +345,7 @@ export function SandboxCard({
       ) : null}
 
       {columns.length > 0 ? (
+        <>
         <div className="table-scroll">
           <table className="data-table tabular-nums">
             <thead>
@@ -355,7 +361,7 @@ export function SandboxCard({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, rIdx) => (
+              {visibleRows.map((row, rIdx) => (
                 <tr key={rIdx}>
                   {columns.map((col) => {
                     const cellVal = row[col] ?? null;
@@ -371,6 +377,21 @@ export function SandboxCard({
             </tbody>
           </table>
         </div>
+        {hasMoreRows ? (
+          <div className="table-expand-row">
+            <button
+              type="button"
+              className="btn-link-subtle"
+              onClick={() => setShowAllRows((prev) => !prev)}
+              aria-expanded={showAllRows}
+            >
+              {showAllRows
+                ? `Show top ${defaultVisibleRows}`
+                : `Show all ${rows.length} rows`}
+            </button>
+          </div>
+        ) : null}
+        </>
       ) : null}
     </section>
   );

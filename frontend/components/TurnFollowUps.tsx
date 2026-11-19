@@ -35,12 +35,13 @@ export function TurnFollowUps({
     >
       <span className="turn-followups-label">Next</span>
       <div className="turn-followups-list">
-        {chips.map((chip) => (
+        {chips.map((chip, idx) => (
           <button
             key={chip.id}
             type="button"
             disabled={disabled}
-            className={`turn-followup-chip turn-followup-${chip.tone}`}
+            aria-label={idx === 0 ? `Default next step: ${chip.label}` : chip.label}
+            className={`turn-followup-chip turn-followup-${chip.tone}${idx === 0 ? ' turn-followup-primary' : ''}`}
             onClick={() => onSelect(chip.prompt, chip.tierHint)}
             data-testid={`followup-${chip.id}`}
           >

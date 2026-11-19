@@ -44,6 +44,10 @@ export function HygieneCard({
   const [appliedLocal, setAppliedLocal] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [issueFilter, setIssueFilter] = useState<
+    'all' | 'broken_404' | 'utm_violation'
+  >('all');
+  const [showAllRows, setShowAllRows] = useState(false);
 
   if (state === 'skeleton') {
     return (
@@ -120,6 +124,20 @@ export function HygieneCard({
     (a, b) => b.spend - a.spend,
   );
   const maxChannelRisk = Math.max(...channelRiskRows.map((row) => row.spend), 1);
+
+  const defaultVisibleRows = 5;
+  const brokenItemsCount = rawItems.filter(
+    (item) => item.issueType === 'broken_404',
+  ).length;
+  const utmItemsCount = rawItems.length - brokenItemsCount;
+  const filteredItems =
+    issueFilter === 'all'
+      ? rawItems
+      : rawItems.filter((item) => item.issueType === issueFilter);
+  const hasMoreRows = filteredItems.length > defaultVisibleRows;
+  const visibleItems = showAllRows
+    ? filteredItems
+    : filteredItems.slice(0, defaultVisibleRows);
 
   const handleApplyClick = async () => {
     setApplying(true);
@@ -207,59 +225,125 @@ export function HygieneCard({
       ) : null}
 
       {rawItems.length > 0 ? (
-        <div className="table-scroll">
-          <table className="data-table tabular-nums">
-            <thead>
-              <tr>
-                <th scope="col">Channel</th>
-                <th scope="col">Campaign &amp; ad group</th>
-                <th scope="col">Issue</th>
-                <th scope="col">Flagged URL / UTM tag</th>
-                <th scope="col" className="num">
-                  Daily spend impacted
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rawItems.map((item) => {
-                const tone = resolveChannelTone(item.channel);
-                const isBroken = item.issueType === 'broken_404';
-                return (
-                  <tr key={item.issueId}>
-                    <td>
-                      <span className="pill channel-pill">
+        <>
+          {brokenItemsCount > 0 && utmItemsCount > 0 ? (
+            <div
+              className="hygiene-filter-bar"
+              role="group"
+              aria-label="Filter flagged issues"
+            >
+              <button
+                type="button"
+                className={
+                  issueFilter === 'all' ? 'btn-chip btn-chip-active' : 'btn-chip'
+                }
+                onClick={() => {
+                  setIssueFilter('all');
+                  setShowAllRows(false);
+                }}
+              >
+                All ({rawItems.length})
+              </button>
+              <button
+                type="button"
+                className={
+                  issueFilter === 'broken_404'
+                    ? 'btn-chip btn-chip-active'
+                    : 'btn-chip'
+                }
+                onClick={() => {
+                  setIssueFilter('broken_404');
+                  setShowAllRows(false);
+                }}
+              >
+                Broken 404 ({brokenItemsCount})
+              </button>
+              <button
+                type="button"
+                className={
+                  issueFilter === 'utm_violation'
+                    ? 'btn-chip btn-chip-active'
+                    : 'btn-chip'
+                }
+                onClick={() => {
+                  setIssueFilter('utm_violation');
+                  setShowAllRows(false);
+                }}
+              >
+                UTM tags ({utmItemsCount})
+              </button>
+            </div>
+          ) : null}
+
+          <div className="table-scroll">
+            <table className="data-table tabular-nums">
+              <thead>
+                <tr>
+                  <th scope="col">Channel</th>
+                  <th scope="col">Campaign &amp; ad group</th>
+                  <th scope="col">Issue</th>
+                  <th scope="col">Flagged URL / UTM tag</th>
+                  <th scope="col" className="num">
+                    Daily spend impacted
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleItems.map((item) => {
+                  const tone = resolveChannelTone(item.channel);
+                  const isBroken = item.issueType === 'broken_404';
+                  return (
+                    <tr key={item.issueId}>
+                      <td>
+                        <span className="pill channel-pill">
+                          <span
+                            className={`channel-dot channel-dot-${tone}`}
+                            aria-hidden="true"
+                          />
+                          <span>{item.channel}</span>
+                        </span>
+                      </td>
+                      <td>
+                        <div className="cell-primary">{item.campaignName}</div>
+                        <div className="cell-secondary">{item.adGroupId}</div>
+                      </td>
+                      <td>
                         <span
-                          className={`channel-dot channel-dot-${tone}`}
-                          aria-hidden="true"
-                        />
-                        <span>{item.channel}</span>
-                      </span>
-                    </td>
-                    <td>
-                      <div className="cell-primary">{item.campaignName}</div>
-                      <div className="cell-secondary">{item.adGroupId}</div>
-                    </td>
-                    <td>
-                      <span
-                        className={
-                          isBroken ? 'pill pill-danger' : 'pill pill-amber'
-                        }
-                      >
-                        {isBroken ? 'Broken 404 link' : 'UTM tag issue'}
-                      </span>
-                    </td>
-                    <td className="mono-text cell-truncate" title={item.value}>
-                      {item.value}
-                    </td>
-                    <td className="num metric-danger-cell">
-                      ${formatMoney(item.dailySpendAtRisk)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                          className={
+                            isBroken ? 'pill pill-danger' : 'pill pill-amber'
+                          }
+                        >
+                          {isBroken ? 'Broken 404 link' : 'UTM tag issue'}
+                        </span>
+                      </td>
+                      <td className="mono-text cell-truncate" title={item.value}>
+                        {item.value}
+                      </td>
+                      <td className="num metric-danger-cell">
+                        ${formatMoney(item.dailySpendAtRisk)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {hasMoreRows ? (
+            <div className="table-expand-row">
+              <button
+                type="button"
+                className="btn-link-subtle"
+                onClick={() => setShowAllRows((prev) => !prev)}
+                aria-expanded={showAllRows}
+              >
+                {showAllRows
+                  ? `Show top ${defaultVisibleRows}`
+                  : `Show all ${filteredItems.length} issues`}
+              </button>
+            </div>
+          ) : null}
+        </>
       ) : (
         <p className="card-empty-note">
           All active landing pages and UTM tracking tags look healthy.

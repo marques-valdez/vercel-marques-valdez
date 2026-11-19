@@ -2199,3 +2199,120 @@ test('ChannelHealthStrip interactive triggers and interpolateEaseOut behave clea
   assert.equal(stripHtml.includes('data-testid="trend-sparkline-meta_ads"'), true);
   assert.equal(stripHtml.includes('data-testid="optimize-mix-btn"'), true);
 });
+
+
+test('V6 concise cards: HygieneCard Top-5 & filter pills, SandboxCard Top-6, and sequential TurnFollowUps primary chip', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { HygieneCard } = loadTsModule('components/HygieneCard.tsx');
+  const { SandboxCard } = loadTsModule('components/SandboxCard.tsx');
+  const { TurnFollowUps } = loadTsModule('components/TurnFollowUps.tsx');
+  const { buildTurnFollowUps } = loadTsModule('lib/follow-ups.ts');
+
+  const syntheticIssues = Array.from({ length: 8 }, (_, idx) => ({
+    issueId: `syn_iss_${idx + 1}`,
+    channel: idx % 2 === 0 ? 'Google Ads' : 'Meta Ads',
+    campaignName: `Synthetic Campaign Row ${idx + 1}`,
+    adGroupId: `syn_ag_${idx + 1}`,
+    issueType: idx < 4 ? 'broken_404' : 'utm_violation',
+    value: idx < 4 ? `https://example.invalid/p/${idx + 1}` : `utm_missing_${idx + 1}`,
+    dailySpendAtRisk: 100 - idx * 5,
+  }));
+
+  const hygieneHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(HygieneCard, {
+      state: 'completed',
+      output: {
+        brokenCount: 4,
+        utmCount: 4,
+        totalSpendAtRiskPerDay: 660,
+        flaggedItems: syntheticIssues,
+      },
+      twinState: null,
+      onApplyFix: async () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(hygieneHtml.includes('All (8)'), true);
+  assert.equal(hygieneHtml.includes('Broken 404 (4)'), true);
+  assert.equal(hygieneHtml.includes('UTM tags (4)'), true);
+  assert.equal(hygieneHtml.includes('Show all 8 issues'), true);
+  assert.equal(hygieneHtml.includes('Synthetic Campaign Row 5'), true);
+  assert.equal(hygieneHtml.includes('Synthetic Campaign Row 6'), false);
+
+  const syntheticSandboxRows = Array.from({ length: 9 }, (_, idx) => ({
+    campaign_name: `Perf Sample ${idx + 1}`,
+    spend: 500 + idx * 10,
+    roas: 2.1 + idx * 0.1,
+  }));
+
+  const sandboxHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(SandboxCard, {
+      state: 'output-available',
+      output: {
+        templateId: 'campaign_roas_ranking',
+        rowsScanned: 90,
+        executionMs: 12,
+        table: syntheticSandboxRows,
+        summary: 'Top slice rendered.',
+      },
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(sandboxHtml.includes('Show all 9 rows'), true);
+  assert.equal(sandboxHtml.includes('Perf Sample 6'), true);
+  assert.equal(sandboxHtml.includes('Perf Sample 7'), false);
+
+  const twin = {
+    channels: [
+      { channelId: 'google_ads', channel: 'Google Ads', dailyBudget: 900, roas: 2.4, brokenCreatives: 1, utmViolations: 1 },
+      { channelId: 'meta_ads', channel: 'Meta Ads', dailyBudget: 1100, roas: 3.9, brokenCreatives: 0, utmViolations: 0 },
+    ],
+    totals: { dailyBudget: 2000, monthlyBudget: 60000, blendedRoas: 3.2, brokenCreatives: 1, utmViolations: 1 },
+    baseline: { dailyBudget: 2000, monthlyBudget: 60000, blendedRoas: 3.2, brokenCreatives: 1, utmViolations: 1 },
+    activeMutationsCount: 0,
+  };
+
+  const sandboxChipFirst = (templateId) =>
+    buildTurnFollowUps({
+      parts: [
+        {
+          type: 'tool-analyze_in_sandbox',
+          toolCallId: `sbx-${templateId}`,
+          state: 'output-available',
+          output: { templateId, rowsScanned: 10, executionMs: 5, table: [], summary: '' },
+        },
+      ],
+      twinState: twin,
+      proposalDecisions: {},
+    })[0];
+
+  assert.equal(sandboxChipFirst('channel_roas_summary').id, 'perf-next-campaigns');
+  assert.equal(sandboxChipFirst('campaign_roas_ranking').id, 'perf-next-adgroups');
+  assert.equal(sandboxChipFirst('ad_group_efficiency').id, 'perf-next-anomalies');
+  assert.equal(sandboxChipFirst('daily_pacing_anomalies').id, 'perf-next-channels');
+
+  const hygieneChips = buildTurnFollowUps({
+    parts: [
+      {
+        type: 'tool-audit_campaign_hygiene',
+        toolCallId: 'hyg-seq-1',
+        state: 'output-available',
+        output: { brokenCount: 1, utmCount: 1, totalSpendAtRiskPerDay: 200, flaggedItems: [] },
+      },
+    ],
+    twinState: twin,
+    proposalDecisions: {},
+  });
+  assert.equal(hygieneChips[0].id, 'hygiene-to-perf');
+
+  const followUpsHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(TurnFollowUps, {
+      chips: hygieneChips,
+      disabled: false,
+      onSelect: () => {},
+    }),
+  );
+  assert.equal(followUpsHtml.includes('turn-followup-primary'), true);
+  assert.equal(followUpsHtml.includes('Default next step:'), true);
+});

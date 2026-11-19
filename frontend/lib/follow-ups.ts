@@ -152,6 +152,14 @@ export function buildTurnFollowUps(args: {
   }
 
   if (hygieneOutput) {
+    chips.push({
+      id: 'hygiene-to-perf',
+      label: 'Compare channel ROAS & wasted spend',
+      prompt:
+        'Run a channel ROAS summary in the sandbox comparing spend, attributed pipeline, and blended ROAS by channel.',
+      tierHint: 'fast',
+      tone: 'green',
+    });
     if (channelSpread) {
       chips.push({
         id: 'hygiene-to-shift',
@@ -161,14 +169,6 @@ export function buildTurnFollowUps(args: {
         tone: 'amber',
       });
     }
-    chips.push({
-      id: 'hygiene-to-perf',
-      label: 'Compare campaign ROAS & zero-conversion spend',
-      prompt:
-        'Rank all campaigns by spend, attributed pipeline, and ROAS and flag any ad groups with zero conversions.',
-      tierHint: 'fast',
-      tone: 'green',
-    });
     chips.push({
       id: 'hygiene-to-workflow',
       label: 'Automate this check every morning',
@@ -181,6 +181,45 @@ export function buildTurnFollowUps(args: {
   }
 
   if (sandboxOutput) {
+    const templateId = sandboxOutput.templateId;
+    if (templateId === 'channel_roas_summary') {
+      chips.push({
+        id: 'perf-next-campaigns',
+        label: 'Next table: Rank campaigns by ROAS',
+        prompt:
+          'Rank all campaigns by spend, attributed pipeline, and ROAS in the sandbox.',
+        tierHint: 'fast',
+        tone: 'green',
+      });
+    } else if (templateId === 'campaign_roas_ranking') {
+      chips.push({
+        id: 'perf-next-adgroups',
+        label: 'Next table: Find zero-conversion ad groups',
+        prompt:
+          'Check ad_group_efficiency in the sandbox for ad groups spending budget with zero conversions.',
+        tierHint: 'fast',
+        tone: 'green',
+      });
+    } else if (templateId === 'ad_group_efficiency') {
+      chips.push({
+        id: 'perf-next-anomalies',
+        label: 'Next table: Daily pacing spend spikes',
+        prompt:
+          'Analyze daily pacing anomalies across channels to highlight unexpected spend spikes or dips.',
+        tierHint: 'fast',
+        tone: 'green',
+      });
+    } else {
+      chips.push({
+        id: 'perf-next-channels',
+        label: 'Next table: Channel ROAS summary',
+        prompt:
+          'Compare 30-day spend, pipeline, and blended ROAS by channel in the sandbox.',
+        tierHint: 'fast',
+        tone: 'green',
+      });
+    }
+
     if (channelSpread) {
       chips.push({
         id: 'perf-to-shift',
@@ -196,25 +235,6 @@ export function buildTurnFollowUps(args: {
         label: 'Inspect active broken links & UTM gaps',
         prompt:
           'Audit active broken 404 landing pages and UTM tracking issues ranked by daily spend at risk.',
-        tierHint: 'fast',
-        tone: 'blue',
-      });
-    }
-    if (sandboxOutput.templateId !== 'daily_pacing_anomalies') {
-      chips.push({
-        id: 'perf-to-spikes',
-        label: 'Spot daily spend spikes over the last 30 days',
-        prompt:
-          'Analyze daily pacing anomalies across channels to highlight unexpected spend spikes or dips.',
-        tierHint: 'fast',
-        tone: 'green',
-      });
-    } else {
-      chips.push({
-        id: 'perf-to-zero-conv',
-        label: 'Find zero-conversion ad groups',
-        prompt:
-          'Check ad group efficiency for any ad groups spending budget with zero conversions.',
         tierHint: 'fast',
         tone: 'blue',
       });

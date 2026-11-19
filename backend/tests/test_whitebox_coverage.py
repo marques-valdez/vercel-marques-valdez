@@ -2220,5 +2220,8 @@ async def test_workflow_dag_dependencies_custom_naming_and_prompt_grounding() ->
     assert "`Workflows` flyout" in prompt_text
     assert "Never invent non-existent pages" in prompt_text
     assert "Marketing Manager" in prompt_text
+    assert "Response conciseness & visual card de-duplication rules" in prompt_text
+    assert "NEVER repeat a tool card's full dataset or emit duplicate Markdown tables" in prompt_text
+    assert "never list internal IDs" in prompt_text
 
 
