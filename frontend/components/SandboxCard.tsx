@@ -12,6 +12,7 @@
 
 import React, { useState } from 'react';
 import type { SandboxStatusData, SandboxToolOutput } from '@/lib/types';
+import { getChannelColorVar, resolveChannelTone } from './charts';
 
 interface SandboxCardProps {
   state: 'skeleton' | 'completed' | 'error';
@@ -226,7 +227,7 @@ export function SandboxCard({
           <div className="tool-card-eyebrow">PAID MEDIA PERFORMANCE</div>
           <h3 className="tool-card-title">Spend, pipeline &amp; return on ad spend</h3>
         </div>
-        <span className="pill tabular-nums">
+        <span className="pill pill-green tabular-nums">
           {`${effectiveOutput.rowsScanned.toLocaleString('en-US')} daily records`}
         </span>
       </div>
@@ -292,18 +293,33 @@ export function SandboxCard({
             const numericVal =
               typeof rawVal === 'number' && Number.isFinite(rawVal) ? rawVal : 0;
             const widthPct = Math.max(2, Math.min(100, (numericVal / maxBarValue) * 100));
+            const channelCandidate =
+              typeof row.channel === 'string' ? row.channel : label;
+            const tone = resolveChannelTone(channelCandidate);
+            const barColor =
+              tone !== 'default'
+                ? getChannelColorVar(channelCandidate)
+                : 'var(--accent-green)';
             return (
               <div key={`${label}-${idx}`} className="bar-row">
                 <div className="bar-row-meta">
-                  <span className="bar-label">{label}</span>
+                  <span className="bar-label">
+                    {tone !== 'default' ? (
+                      <span
+                        className={`channel-dot channel-dot-${tone}`}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    <span>{label}</span>
+                  </span>
                   <span className="bar-value">
                     {formatCellValue(barMetricColumn, numericVal)}
                   </span>
                 </div>
                 <div className="bar-track">
                   <div
-                    className="bar-fill bar-fill-green"
-                    style={{ width: `${widthPct.toFixed(1)}%` }}
+                    className="bar-fill"
+                    style={{ width: `${widthPct.toFixed(1)}%`, backgroundColor: barColor }}
                   />
                 </div>
               </div>

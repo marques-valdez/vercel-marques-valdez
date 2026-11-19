@@ -1412,3 +1412,361 @@ test('BackendAlertBanner and buildHttpErrorAlert translate 429/422/504 and rende
   );
   assert.equal(xrayHtml.includes('HTTP 504'), true);
 });
+
+
+test('Chart primitives render scaled bars, stacked shares, before/after comparisons, P10-P90 range geometry, and threshold gauges', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const {
+    BarRow,
+    StackedShareBar,
+    BeforeAfterBars,
+    RangeBar,
+    ThresholdGauge,
+    WorkflowVisualSummary,
+    computeBarPercent,
+    computeStackedSegments,
+    computeRangeGeometry,
+    computeThresholdGauge,
+  } = loadTsModule('components/charts.tsx');
+  const { ChannelHealthStrip } = loadTsModule('components/ChannelHealthStrip.tsx');
+  const { HygieneCard } = loadTsModule('components/HygieneCard.tsx');
+
+  // Edge cases on pure math helpers
+  assert.equal(computeBarPercent(0, 100), 0);
+  assert.equal(computeBarPercent(-5, 100), 0);
+  assert.equal(computeBarPercent(Number.NaN, 100), 0);
+  assert.equal(computeBarPercent(50, 100), 50);
+  assert.equal(computeBarPercent(1, 1000), 3); // visible positive floor
+
+  const stacked = computeStackedSegments([
+    { id: 'a', label: 'A', value: 30, color: '#0070F3' },
+    { id: 'b', label: 'B', value: 0, color: '#7C3AED' },
+    { id: 'c', label: 'C', value: -10, color: '#0E9F9A' },
+    { id: 'd', label: 'D', value: 70, color: '#0E8A16' },
+  ]);
+  assert.equal(stacked.length, 2);
+  assert.equal(stacked[0].pct, 30);
+  assert.equal(stacked[1].pct, 70);
+
+  const posRange = computeRangeGeometry(2000, 5000, 9000);
+  assert.equal(posRange.allNonNegative, true);
+  assert.equal(posRange.allNegative, false);
+  assert.ok(posRange.p10Pct < posRange.p50Pct && posRange.p50Pct < posRange.p90Pct);
+
+  const mixedRange = computeRangeGeometry(-1500, 1000, 4500);
+  assert.equal(mixedRange.allNonNegative, false);
+  assert.equal(mixedRange.allNegative, false);
+  assert.ok(mixedRange.zeroPct !== null && mixedRange.zeroPct > mixedRange.p10Pct);
+
+  const flatRange = computeRangeGeometry(0, 0, 0);
+  assert.equal(flatRange.p50Pct, 50);
+
+  const triggeredGauge = computeThresholdGauge(24, 15);
+  assert.equal(triggeredGauge.status, 'triggered');
+  assert.ok(triggeredGauge.fillPct > triggeredGauge.thresholdPctPos);
+
+  const healthyGauge = computeThresholdGauge(4, 15);
+  assert.equal(healthyGauge.status, 'healthy');
+  assert.ok(healthyGauge.fillPct < healthyGauge.thresholdPctPos);
+
+  const zeroGauge = computeThresholdGauge(0, 15);
+  assert.equal(zeroGauge.fillPct, 0);
+  assert.equal(zeroGauge.status, 'healthy');
+
+  const barHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(BarRow, {
+      label: 'Google Ads',
+      value: 4.2,
+      maxValue: 4.2,
+      valueText: '4.20x ROAS',
+      color: 'var(--channel-google)',
+    }),
+  );
+  assert.equal(barHtml.includes('width:100%'), true);
+  assert.equal(barHtml.includes('4.20x ROAS'), true);
+
+  const stackedHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(StackedShareBar, {
+      title: 'Split',
+      segments: [
+        { id: 'g', label: 'Google Ads', value: 600, valueText: '$600/day', color: 'var(--channel-google)' },
+        { id: 'm', label: 'Meta Ads', value: 400, valueText: '$400/day', color: 'var(--channel-meta)' },
+      ],
+    }),
+  );
+  assert.equal(stackedHtml.includes('width:60%'), true);
+  assert.equal(stackedHtml.includes('width:40%'), true);
+
+  const baHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(BeforeAfterBars, {
+      items: [
+        {
+          id: 'c1',
+          label: 'Paid Social',
+          beforeValue: 500,
+          afterValue: 300,
+          beforeText: '$500/day',
+          afterText: '$300/day',
+          deltaText: '-$200/day',
+          deltaTone: 'negative',
+          color: 'var(--channel-linkedin)',
+        },
+      ],
+    }),
+  );
+  assert.equal(baHtml.includes('-$200/day'), true);
+  assert.equal(baHtml.includes('width:100%'), true);
+  assert.equal(baHtml.includes('width:60%'), true);
+
+  const rangeHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(RangeBar, {
+      p10: 2500,
+      p50: 4800,
+      p90: 7100,
+      p10Text: '+$2,500',
+      p50Text: '+$4,800',
+      p90Text: '+$7,100',
+    }),
+  );
+  assert.equal(rangeHtml.includes('<svg'), true);
+  assert.equal(rangeHtml.includes('+$4,800'), true);
+
+  const gaugeHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ThresholdGauge, {
+      label: 'Daily spend at risk',
+      valuePct: 22.5,
+      thresholdPct: 15,
+      valueText: '22.5%',
+    }),
+  );
+  assert.equal(gaugeHtml.includes('Alert triggered'), true);
+  assert.equal(gaugeHtml.includes('22.5%'), true);
+
+  const wfVisualHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(WorkflowVisualSummary, {
+      digestPreview: 'Morning brief payload',
+      digestSummary: {
+        brokenCreatives: 3,
+        utmViolations: 2,
+        spendAtRiskPerDay: 450,
+        spendAtRiskPct: 22.5,
+        thresholdPct: 15,
+        gateTriggered: true,
+        blendedRoas: 3.1,
+        highestRoasChannel: { channel: 'Google Ads', channelId: 'google_ads', roas: 4.4 },
+        lowestRoasChannel: { channel: 'LinkedIn Ads', channelId: 'linkedin_ads', roas: 1.5 },
+      },
+      channels: ['google_ads', 'linkedin_ads'],
+      threshold: 15,
+    }),
+  );
+  assert.equal(wfVisualHtml.includes('workflow-threshold-gauge'), true);
+  assert.equal(wfVisualHtml.includes('workflow-roas-bars'), true);
+  assert.equal(wfVisualHtml.includes('<details'), true);
+  assert.equal(wfVisualHtml.includes('Morning brief payload'), true);
+
+  const stripHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ChannelHealthStrip, {
+      twinState: {
+        totals: {
+          campaignCount: 4,
+          adGroupCount: 16,
+          rowCount: 400,
+          dailyBudget: 1000,
+          monthlyBudget: 30000,
+          brokenCreatives: 2,
+          utmViolations: 1,
+          spendAtRiskPerDay: 150,
+          blendedRoas: 3.2,
+          appliedMutations: 0,
+        },
+        channels: [
+          {
+            channel: 'Google Ads',
+            channelId: 'google_ads',
+            campaignCount: 2,
+            adGroupCount: 8,
+            dailyBudget: 600,
+            brokenCreatives: 0,
+            utmViolations: 0,
+            spendAtRiskPerDay: 0,
+            totalSpend: 6000,
+            totalPipelineValue: 24000,
+            roas: 4.0,
+          },
+          {
+            channel: 'LinkedIn Ads',
+            channelId: 'linkedin_ads',
+            campaignCount: 2,
+            adGroupCount: 8,
+            dailyBudget: 400,
+            brokenCreatives: 2,
+            utmViolations: 1,
+            spendAtRiskPerDay: 150,
+            totalSpend: 4000,
+            totalPipelineValue: 8000,
+            roas: 2.0,
+          },
+        ],
+        campaigns: [],
+        hygieneIssues: [],
+      },
+      errorText: null,
+      onRetry: () => {},
+      onReset: () => {},
+    }),
+  );
+  assert.equal(stripHtml.includes('channel-budget-share-bar'), true);
+  assert.equal(stripHtml.includes('health-channel-google'), true);
+  assert.equal(stripHtml.includes('health-chip-danger'), true);
+
+  const hygieneHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(HygieneCard, {
+      state: 'completed',
+      output: {
+        brokenCount: 1,
+        utmCount: 1,
+        totalSpendAtRiskPerDay: 350,
+        flaggedItems: [
+          {
+            issueId: 'iss_1',
+            issueType: 'broken_404',
+            channel: 'Google Ads',
+            channelId: 'google_ads',
+            campaignId: 'c1',
+            campaignName: 'Brand Exact',
+            adGroupId: 'ag_1',
+            value: 'https://example.com/404',
+            dailySpendAtRisk: 250,
+          },
+          {
+            issueId: 'iss_2',
+            issueType: 'utm_violation',
+            channel: 'Meta Ads',
+            channelId: 'meta_ads',
+            campaignId: 'c2',
+            campaignName: 'Retargeting',
+            adGroupId: 'ag_2',
+            value: 'missing utm_campaign',
+            dailySpendAtRisk: 100,
+          },
+        ],
+      },
+      twinState: null,
+      onApplyFix: async () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(hygieneHtml.includes('hygiene-risk-chart'), true);
+  assert.equal(hygieneHtml.includes('pill-danger'), true);
+  assert.equal(hygieneHtml.includes('pill-amber'), true);
+});
+
+test('Floating Composer renders accessible send button, hides counter below 1500 chars, and preserves channel & X-Ray rows', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { Composer } = loadTsModule('components/Composer.tsx');
+
+  const idleHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(Composer, {
+      value: '',
+      isStreaming: false,
+      hasConversation: false,
+      onChange: () => {},
+      onSubmit: () => {},
+      onStop: () => {},
+    }),
+  );
+  assert.equal(idleHtml.includes('aria-label="Send message"'), true);
+  assert.equal(idleHtml.includes('composer-form-idle'), true);
+  assert.equal(idleHtml.includes('Ask Relay about your campaigns…'), true);
+  assert.equal(idleHtml.includes('composer-counter'), false);
+  assert.equal(idleHtml.includes('Google Ads · LinkedIn Ads · Meta Ads'), true);
+
+  const longInputHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(Composer, {
+      value: 'a'.repeat(1550),
+      isStreaming: false,
+      hasConversation: true,
+      onChange: () => {},
+      onSubmit: () => {},
+      onStop: () => {},
+    }),
+  );
+  assert.equal(longInputHtml.includes('composer-counter'), true);
+  assert.equal(longInputHtml.includes('1,550 / 2,000'), true);
+  assert.equal(longInputHtml.includes('composer-form-idle'), false);
+  assert.equal(longInputHtml.includes('composer-send-btn-ready'), true);
+});
+
+test('use-chat-scroll decision logic pins new user prompts, skips hydration and mid-stream updates, and toggles Jump to latest pill', () => {
+  const {
+    getLatestUserMessageId,
+    shouldScrollToNewPrompt,
+    computeJumpPillState,
+  } = loadTsModule('lib/use-chat-scroll.ts');
+
+  assert.equal(
+    getLatestUserMessageId([
+      { id: 'u1', role: 'user' },
+      { id: 'a1', role: 'assistant' },
+      { id: 'u2', role: 'user' },
+    ]),
+    'u2',
+  );
+  assert.equal(getLatestUserMessageId([{ id: 'a1', role: 'assistant' }]), null);
+
+  // Saved history hydrating on page reload -> never auto-scroll
+  assert.equal(
+    shouldScrollToNewPrompt({
+      prevLastUserId: null,
+      nextLastUserId: 'u1',
+      isStreaming: false,
+      isHydrating: true,
+    }),
+    false,
+  );
+
+  // User submits new prompt -> scroll immediately to pin it
+  assert.equal(
+    shouldScrollToNewPrompt({
+      prevLastUserId: 'u1',
+      nextLastUserId: 'u2',
+      isStreaming: true,
+      isHydrating: false,
+    }),
+    true,
+  );
+
+  // Assistant keeps streaming tokens for same user turn -> never force-scroll
+  assert.equal(
+    shouldScrollToNewPrompt({
+      prevLastUserId: 'u2',
+      nextLastUserId: 'u2',
+      isStreaming: true,
+      isHydrating: false,
+    }),
+    false,
+  );
+
+  // Pill hidden when 0 messages or when sentinel is visible
+  assert.deepEqual(
+    computeJumpPillState({ messageCount: 0, isSentinelVisible: false, isStreaming: false }),
+    { visible: false, label: '', isStreaming: false },
+  );
+  assert.deepEqual(
+    computeJumpPillState({ messageCount: 2, isSentinelVisible: true, isStreaming: true }),
+    { visible: false, label: '', isStreaming: false },
+  );
+
+  // Pill shows "Jump to latest" when idle & scrolled up, "New reply" when streaming & scrolled up
+  assert.deepEqual(
+    computeJumpPillState({ messageCount: 4, isSentinelVisible: false, isStreaming: false }),
+    { visible: true, label: 'Jump to latest', isStreaming: false },
+  );
+  assert.deepEqual(
+    computeJumpPillState({ messageCount: 4, isSentinelVisible: false, isStreaming: true }),
+    { visible: true, label: 'New reply', isStreaming: true },
+  );
+});

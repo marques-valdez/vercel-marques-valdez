@@ -25,6 +25,7 @@ import type {
   WorkflowToolOutput,
 } from '@/lib/types';
 import { WorkflowNextSteps } from './WorkflowNextSteps';
+import { WorkflowVisualSummary, resolveChannelTone } from './charts';
 
 interface WorkflowCardProps {
   state: 'skeleton' | 'completed' | 'error';
@@ -88,7 +89,7 @@ export function WorkflowCard({
   if (state === 'skeleton') {
     return (
       <section
-        className="tool-card accent-blue"
+        className="tool-card accent-violet"
         aria-busy="true"
         aria-label="Setting up recurring campaign check"
       >
@@ -310,7 +311,7 @@ export function WorkflowCard({
 
   return (
     <section
-      className="tool-card accent-blue"
+      className="tool-card accent-violet"
       data-testid="workflow-card"
       aria-label="Scheduled campaign check"
     >
@@ -320,25 +321,42 @@ export function WorkflowCard({
           <h3 className="tool-card-title">{output.title}</h3>
         </div>
         <div className="kpi-cluster tabular-nums">
-          <span className="pill">{formatScheduleForMarketer(output.schedule)}</span>
-          <span className="pill">
+          <span className="pill pill-violet">
+            {formatScheduleForMarketer(output.schedule)}
+          </span>
+          <span className="pill pill-amber">
             {`Alert if ≥ ${output.threshold}% spend at risk`}
           </span>
         </div>
       </div>
 
       <div className="channel-pill-row">
-        {(output.channels ?? []).map((ch) => (
-          <span key={ch} className="pill channel-pill">
-            {CHANNEL_LABELS[ch] ?? ch}
-          </span>
-        ))}
+        {(output.channels ?? []).map((ch, idx) => {
+          const tone = resolveChannelTone(ch);
+          return (
+            <span key={`${ch}-${idx}`} className="pill channel-pill">
+              <span
+                className={`channel-dot channel-dot-${tone}`}
+                aria-hidden="true"
+              />
+              <span>{CHANNEL_LABELS[ch] ?? ch}</span>
+            </span>
+          );
+        })}
       </div>
 
       <ol className="workflow-step-list tabular-nums">
         {orderedNodes.map((step, index) => {
           const runInfo = stepStates[step.node];
           const status = runInfo?.status ?? 'idle';
+          const statusChipClass =
+            status === 'running'
+              ? 'workflow-step-chip workflow-step-chip-running'
+              : status === 'failed'
+                ? 'workflow-step-chip workflow-step-chip-failed'
+                : status === 'completed'
+                  ? 'workflow-step-chip workflow-step-chip-done'
+                  : 'workflow-step-chip workflow-step-chip-included';
           return (
             <li
               key={step.node}
@@ -350,14 +368,14 @@ export function WorkflowCard({
                   <span className="workflow-step-index">{index + 1}</span>
                   <strong className="workflow-step-name">{step.node}</strong>
                 </div>
-                <div className="workflow-step-timing">
+                <div className={`workflow-step-timing ${statusChipClass}`}>
                   {status === 'running'
                     ? 'Checking…'
                     : status === 'failed'
                       ? 'Needs review'
                       : status === 'completed'
                         ? '✓ Checked'
-                        : 'Included'}
+                        : '✓ Included'}
                 </div>
               </div>
               {runInfo?.detail ? (
@@ -371,12 +389,14 @@ export function WorkflowCard({
       </ol>
 
       {digestPreview ? (
-        <div className="digest-preview-box" data-testid="workflow-digest-preview">
-          <div className="digest-preview-header">
-            Sample morning Slack &amp; Google Sheets brief
-          </div>
-          <pre className="digest-preview-text">{digestPreview}</pre>
-        </div>
+        <WorkflowVisualSummary
+          digestPreview={digestPreview}
+          digestSummary={digestSummary}
+          channels={output.channels ?? []}
+          threshold={output.threshold}
+          twinState={twinState}
+          testId="workflow-digest-preview"
+        />
       ) : null}
 
       {onRunNextStepPrompt ? (

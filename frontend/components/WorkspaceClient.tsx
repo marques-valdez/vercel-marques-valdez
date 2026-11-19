@@ -42,6 +42,7 @@ import {
   readStoredChatMessages,
   writeStoredChatMessages,
 } from '@/lib/chat-store';
+import { useChatScroll } from '@/lib/use-chat-scroll';
 import { PLAYBOOKS } from '@/lib/playbooks';
 import {
   appendTwinMutations,
@@ -499,6 +500,19 @@ export function WorkspaceClient({
   });
 
   const isStreaming = status === 'submitted' || status === 'streaming';
+  const [isHydratingChat, setIsHydratingChat] = useState(true);
+
+  const {
+    latestUserRef,
+    endSentinelRef,
+    pinLatestTurn,
+    jumpPill,
+    jumpToLatest,
+  } = useChatScroll({
+    messages,
+    isStreaming,
+    isHydrating: isHydratingChat && !isStreaming,
+  });
 
   useEffect(() => {
     if (chatHydratedRef.current) {
@@ -513,24 +527,28 @@ export function WorkspaceClient({
     const wsId = workspaceIdRef.current || getOrCreateWorkspaceId();
     workspaceIdRef.current = wsId;
     void (async () => {
-      const snapshot = await fetchWorkspaceSnapshot(wsId);
-      if (!snapshot || !snapshot.databaseConnected) {
-        return;
-      }
-      dbConnectedRef.current = true;
-      if (Array.isArray(snapshot.mutations) && snapshot.mutations.length > 0) {
-        try {
-          const derived = await fetchTwinState(snapshot.mutations);
-          setTwinState(derived);
-        } catch {
-          // Keep locally derived state if replay fails
+      try {
+        const snapshot = await fetchWorkspaceSnapshot(wsId);
+        if (!snapshot || !snapshot.databaseConnected) {
+          return;
         }
-      }
-      if (Array.isArray(snapshot.workflows) && snapshot.workflows.length > 0) {
-        setSavedWorkflows(snapshot.workflows);
-      }
-      if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
-        setMessages(snapshot.messages);
+        dbConnectedRef.current = true;
+        if (Array.isArray(snapshot.mutations) && snapshot.mutations.length > 0) {
+          try {
+            const derived = await fetchTwinState(snapshot.mutations);
+            setTwinState(derived);
+          } catch {
+            // Keep locally derived state if replay fails
+          }
+        }
+        if (Array.isArray(snapshot.workflows) && snapshot.workflows.length > 0) {
+          setSavedWorkflows(snapshot.workflows);
+        }
+        if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
+          setMessages(snapshot.messages);
+        }
+      } finally {
+        setIsHydratingChat(false);
       }
     })();
   }, [setMessages]);
@@ -1302,210 +1320,250 @@ export function WorkspaceClient({
               aria-label="Campaign assistant conversation"
               data-testid="conversation-stream"
             >
-              {messages.map((message, msgIdx) => {
-                const isLastMessage = msgIdx === messages.length - 1;
-                if (message.role === 'user') {
-                  const userText = message.parts
-                    .filter(
-                      (p): p is Extract<RelayUIMessage['parts'][number], { type: 'text' }> =>
-                        p.type === 'text',
-                    )
-                    .map((p) => p.text)
-                    .join('\n')
-                    .trim();
+              {(() => {
+                let lastUserMsgIdx = -1;
+                for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+                  if (messages[idx]?.role === 'user') {
+                    lastUserMsgIdx = idx;
+                    break;
+                  }
+                }
 
-                  if (!userText) {
+                const renderTurn = (message: RelayUIMessage, msgIdx: number) => {
+                  const isLastMessage = msgIdx === messages.length - 1;
+                  if (message.role === 'user') {
+                    const userText = message.parts
+                      .filter(
+                        (p): p is Extract<RelayUIMessage['parts'][number], { type: 'text' }> =>
+                          p.type === 'text',
+                      )
+                      .map((p) => p.text)
+                      .join('\n')
+                      .trim();
+
+                    if (!userText) {
+                      return null;
+                    }
+
+                    const isLatestUser = msgIdx === lastUserMsgIdx;
+
+                    return (
+                      <article
+                        key={message.id}
+                        ref={isLatestUser ? latestUserRef : undefined}
+                        className="message-turn message-user"
+                        data-message-role="user"
+                        data-latest-user={isLatestUser ? 'true' : undefined}
+                      >
+                        <div className="user-bubble">{userText}</div>
+                      </article>
+                    );
+                  }
+
+                  assistantOrderIndex += 1;
+                  const currentAssistantIdx = assistantOrderIndex;
+
+                  const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
+                  const turnTelemetry: TelemetryData[] = [];
+                  let latestAgentStatusLabel: string | null = null;
+                  let wasTruncated = false;
+                  for (const part of message.parts) {
+                    if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
+                      sandboxStatusByCallId[part.data.toolCallId] = part.data;
+                    } else if (part.type === 'data-telemetry' && part.data) {
+                      turnTelemetry.push(part.data);
+                    } else if (part.type === 'data-agent-status' && part.data?.label) {
+                      if (part.data.phase === 'truncated') {
+                        wasTruncated = true;
+                      } else {
+                        latestAgentStatusLabel = part.data.label;
+                      }
+                    }
+                  }
+
+                  const renderedParts = message.parts
+                    .map((part, idx) =>
+                      renderMessagePart(part, idx, sandboxStatusByCallId),
+                    )
+                    .filter((node) => node !== null);
+
+                  const capturedFrames = architectMode
+                    ? wireFramesByTurn[message.id] ??
+                      wireFramesByOrder[currentAssistantIdx] ??
+                      []
+                    : [];
+
+                  if (renderedParts.length === 0 && !isStreaming) {
+                    if (isLastMessage && !error && !backendAlert) {
+                      return (
+                        <article
+                          key={message.id}
+                          className="message-turn message-assistant"
+                          data-message-role="assistant"
+                        >
+                          <BackendAlertBanner
+                            alert={{
+                              id: `empty-${message.id}`,
+                              severity: 'error',
+                              title: 'NO RESPONSE RECEIVED',
+                              message:
+                                'Relay did not return a reply for your last request. Click Retry to run it again.',
+                              technicalDetail: 'Assistant turn completed with 0 rendered parts',
+                              retryable: true,
+                            }}
+                            architectMode={architectMode}
+                            onRetry={handleRetry}
+                            testId="unanswered-turn-alert"
+                          />
+                        </article>
+                      );
+                    }
                     return null;
                   }
+
+                  const showActiveStatus = isStreaming && isLastMessage;
+                  const activeStatusText =
+                    latestAgentStatusLabel || 'Reviewing your active campaigns…';
 
                   return (
                     <article
                       key={message.id}
-                      className="message-turn message-user"
-                      data-message-role="user"
+                      className="message-turn message-assistant"
+                      data-message-role="assistant"
                     >
-                      <div className="user-bubble">{userText}</div>
+                      {renderedParts.length > 0 ? (
+                        <div className="assistant-parts-stack">
+                          {renderedParts}
+                          {wasTruncated && !isStreaming ? (
+                            <div
+                              className="truncated-notice-bar"
+                              role="status"
+                              data-testid="truncated-response-notice"
+                            >
+                              <span>
+                                This response reached the length limit and was cut short.
+                              </span>
+                              <button
+                                type="button"
+                                className="next-step-pill-btn"
+                                onClick={() =>
+                                  handleWorkflowPromptAction(
+                                    'Please continue your previous response from where it left off.',
+                                    lastTierHintRef.current ?? 'fast',
+                                  )
+                                }
+                              >
+                                <span>Continue response</span>
+                                <span aria-hidden="true">→</span>
+                              </button>
+                            </div>
+                          ) : null}
+                          {showActiveStatus ? (
+                            <div
+                              className="assistant-streaming-placeholder"
+                              aria-live="polite"
+                              data-testid="agent-activity-status"
+                            >
+                              <span className="agent-activity-dot" aria-hidden="true" />
+                              <span>{activeStatusText}</span>
+                            </div>
+                          ) : null}
+                          {architectMode && turnTelemetry.length > 0 ? (
+                            <TelemetryStrip
+                              entries={turnTelemetry}
+                              onOpenFinOps={() => handleOpenInspectorFromStrip('runtime')}
+                            />
+                          ) : null}
+                          {architectMode && capturedFrames.length > 0 ? (
+                            <ProtocolXRay
+                              frames={capturedFrames}
+                              uiStreamSource={uiStreamSource}
+                              defaultOpen={autoOpenXRayKey === message.id}
+                            />
+                          ) : null}
+                        </div>
+                      ) : showActiveStatus ? (
+                        <div
+                          className="assistant-streaming-placeholder"
+                          aria-live="polite"
+                          data-testid="agent-activity-status"
+                        >
+                          <span className="agent-activity-dot" aria-hidden="true" />
+                          <span>{activeStatusText}</span>
+                        </div>
+                      ) : null}
                     </article>
                   );
-                }
+                };
 
-                assistantOrderIndex += 1;
-                const currentAssistantIdx = assistantOrderIndex;
-
-                const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
-                const turnTelemetry: TelemetryData[] = [];
-                let latestAgentStatusLabel: string | null = null;
-                let wasTruncated = false;
-                for (const part of message.parts) {
-                  if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
-                    sandboxStatusByCallId[part.data.toolCallId] = part.data;
-                  } else if (part.type === 'data-telemetry' && part.data) {
-                    turnTelemetry.push(part.data);
-                  } else if (part.type === 'data-agent-status' && part.data?.label) {
-                    if (part.data.phase === 'truncated') {
-                      wasTruncated = true;
-                    } else {
-                      latestAgentStatusLabel = part.data.label;
-                    }
-                  }
-                }
-
-                const renderedParts = message.parts
-                  .map((part, idx) =>
-                    renderMessagePart(part, idx, sandboxStatusByCallId),
-                  )
-                  .filter((node) => node !== null);
-
-                const capturedFrames = architectMode
-                  ? wireFramesByTurn[message.id] ??
-                    wireFramesByOrder[currentAssistantIdx] ??
-                    []
-                  : [];
-
-                if (renderedParts.length === 0 && !isStreaming) {
-                  if (isLastMessage && !error && !backendAlert) {
-                    return (
-                      <article
-                        key={message.id}
-                        className="message-turn message-assistant"
-                        data-message-role="assistant"
-                      >
-                        <BackendAlertBanner
-                          alert={{
-                            id: `empty-${message.id}`,
-                            severity: 'error',
-                            title: 'NO RESPONSE RECEIVED',
-                            message:
-                              'Relay did not return a reply for your last request. Click Retry to run it again.',
-                            technicalDetail: 'Assistant turn completed with 0 rendered parts',
-                            retryable: true,
-                          }}
-                          architectMode={architectMode}
-                          onRetry={handleRetry}
-                          testId="unanswered-turn-alert"
-                        />
-                      </article>
-                    );
-                  }
-                  return null;
-                }
-
-                const showActiveStatus = isStreaming && isLastMessage;
-                const activeStatusText =
-                  latestAgentStatusLabel || 'Reviewing your active campaigns…';
+                const splitIdx = lastUserMsgIdx >= 0 ? lastUserMsgIdx : messages.length;
+                const priorNodes = messages
+                  .slice(0, splitIdx)
+                  .map((m, idx) => renderTurn(m, idx));
+                const latestNodes = messages
+                  .slice(splitIdx)
+                  .map((m, offset) => renderTurn(m, splitIdx + offset));
 
                 return (
-                  <article
-                    key={message.id}
-                    className="message-turn message-assistant"
-                    data-message-role="assistant"
-                  >
-                    {renderedParts.length > 0 ? (
-                      <div className="assistant-parts-stack">
-                        {renderedParts}
-                        {wasTruncated && !isStreaming ? (
-                          <div
-                            className="truncated-notice-bar"
-                            role="status"
-                            data-testid="truncated-response-notice"
-                          >
-                            <span>
-                              This response reached the length limit and was cut short.
-                            </span>
-                            <button
-                              type="button"
-                              className="next-step-pill-btn"
-                              onClick={() =>
-                                handleWorkflowPromptAction(
-                                  'Please continue your previous response from where it left off.',
-                                  lastTierHintRef.current ?? 'fast',
-                                )
-                              }
-                            >
-                              <span>Continue response</span>
-                              <span aria-hidden="true">→</span>
-                            </button>
-                          </div>
-                        ) : null}
-                        {showActiveStatus ? (
+                  <>
+                    {priorNodes}
+                    <div
+                      className={`conversation-latest-anchor${
+                        pinLatestTurn ? ' conversation-latest-anchor-pinned' : ''
+                      }`}
+                    >
+                      {latestNodes}
+
+                      {isStreaming && messages[messages.length - 1]?.role === 'user' ? (
+                        <article
+                          className="message-turn message-assistant"
+                          data-message-role="assistant"
+                        >
                           <div
                             className="assistant-streaming-placeholder"
                             aria-live="polite"
                             data-testid="agent-activity-status"
                           >
                             <span className="agent-activity-dot" aria-hidden="true" />
-                            <span>{activeStatusText}</span>
+                            <span>Connecting to Relay and reviewing your campaigns…</span>
                           </div>
-                        ) : null}
-                        {architectMode && turnTelemetry.length > 0 ? (
-                          <TelemetryStrip
-                            entries={turnTelemetry}
-                            onOpenFinOps={() => handleOpenInspectorFromStrip('runtime')}
+                        </article>
+                      ) : null}
+
+                      {!isStreaming &&
+                      !error &&
+                      !backendAlert &&
+                      messages.length > 0 &&
+                      messages[messages.length - 1]?.role === 'user' ? (
+                        <article
+                          className="message-turn message-assistant"
+                          data-message-role="assistant"
+                        >
+                          <BackendAlertBanner
+                            alert={{
+                              id: `unanswered-${messages[messages.length - 1].id}`,
+                              severity: 'error',
+                              title: 'NO RESPONSE RECEIVED',
+                              message:
+                                'Relay did not return a reply for your last request. Click Retry to try again.',
+                              technicalDetail: 'Stream finished with no assistant message',
+                              retryable: true,
+                            }}
+                            architectMode={architectMode}
+                            onRetry={handleRetry}
+                            testId="unanswered-turn-alert"
                           />
-                        ) : null}
-                        {architectMode && capturedFrames.length > 0 ? (
-                          <ProtocolXRay
-                            frames={capturedFrames}
-                            uiStreamSource={uiStreamSource}
-                            defaultOpen={autoOpenXRayKey === message.id}
-                          />
-                        ) : null}
-                      </div>
-                    ) : showActiveStatus ? (
-                      <div
-                        className="assistant-streaming-placeholder"
-                        aria-live="polite"
-                        data-testid="agent-activity-status"
-                      >
-                        <span className="agent-activity-dot" aria-hidden="true" />
-                        <span>{activeStatusText}</span>
-                      </div>
-                    ) : null}
-                  </article>
+                        </article>
+                      ) : null}
+                    </div>
+                    <div
+                      ref={endSentinelRef}
+                      className="conversation-end-sentinel"
+                      aria-hidden="true"
+                    />
+                  </>
                 );
-              })}
-
-              {isStreaming && messages[messages.length - 1]?.role === 'user' ? (
-                <article
-                  className="message-turn message-assistant"
-                  data-message-role="assistant"
-                >
-                  <div
-                    className="assistant-streaming-placeholder"
-                    aria-live="polite"
-                    data-testid="agent-activity-status"
-                  >
-                    <span className="agent-activity-dot" aria-hidden="true" />
-                    <span>Connecting to Relay and reviewing your campaigns…</span>
-                  </div>
-                </article>
-              ) : null}
-
-              {!isStreaming &&
-              !error &&
-              !backendAlert &&
-              messages.length > 0 &&
-              messages[messages.length - 1]?.role === 'user' ? (
-                <article
-                  className="message-turn message-assistant"
-                  data-message-role="assistant"
-                >
-                  <BackendAlertBanner
-                    alert={{
-                      id: `unanswered-${messages[messages.length - 1].id}`,
-                      severity: 'error',
-                      title: 'NO RESPONSE RECEIVED',
-                      message:
-                        'Relay did not return a reply for your last request. Click Retry to try again.',
-                      technicalDetail: 'Stream finished with no assistant message',
-                      retryable: true,
-                    }}
-                    architectMode={architectMode}
-                    onRetry={handleRetry}
-                    testId="unanswered-turn-alert"
-                  />
-                </article>
-              ) : null}
+              })()}
             </section>
           </>
         )}
@@ -1564,20 +1622,43 @@ export function WorkspaceClient({
         ) : null}
       </main>
 
-      <Composer
-        value={input}
-        isStreaming={isStreaming}
-        primedTierHint={primedTierHint}
-        health={health}
-        injectFailure={injectFailure}
-        architectMode={architectMode}
-        onChange={handleComposerChange}
-        onSubmit={handleComposerSubmit}
-        onStop={() => {
-          userStoppedRef.current = true;
-          void stop();
-        }}
-      />
+      <div className="composer-dock">
+        {jumpPill.visible ? (
+          <div className="jump-to-latest-wrap">
+            <button
+              type="button"
+              className={`jump-to-latest-pill${
+                jumpPill.isStreaming ? ' jump-to-latest-pill-streaming' : ''
+              }`}
+              onClick={jumpToLatest}
+              aria-label={jumpPill.label}
+              data-testid="jump-to-latest-pill"
+            >
+              {jumpPill.isStreaming ? (
+                <span className="jump-to-latest-dot" aria-hidden="true" />
+              ) : null}
+              <span aria-hidden="true">↓</span>
+              <span>{jumpPill.label}</span>
+            </button>
+          </div>
+        ) : null}
+
+        <Composer
+          value={input}
+          isStreaming={isStreaming}
+          primedTierHint={primedTierHint}
+          health={health}
+          injectFailure={injectFailure}
+          architectMode={architectMode}
+          hasConversation={messages.length > 0}
+          onChange={handleComposerChange}
+          onSubmit={handleComposerSubmit}
+          onStop={() => {
+            userStoppedRef.current = true;
+            void stop();
+          }}
+        />
+      </div>
 
       <ShareModal
         isOpen={shareModalOpen}

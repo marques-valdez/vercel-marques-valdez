@@ -11,6 +11,12 @@
 
 import React, { useState } from 'react';
 import type { ReallocationToolOutput } from '@/lib/types';
+import {
+  BarRow,
+  BeforeAfterBars,
+  RangeBar,
+  getChannelColorVar,
+} from './charts';
 
 interface ReallocationCardProps {
   state: 'skeleton' | 'completed' | 'error';
@@ -56,7 +62,7 @@ export function ReallocationCard({
   if (state === 'skeleton') {
     return (
       <section
-        className="tool-card accent-blue"
+        className="tool-card accent-amber"
         aria-busy="true"
         aria-label="Drafting budget shift proposal"
       >
@@ -108,9 +114,16 @@ export function ReallocationCard({
     onDecline(output);
   };
 
+  const roasLift = output.blendedRoasAfter - output.blendedRoasBefore;
+  const maxRoasScale = Math.max(
+    output.blendedRoasBefore,
+    output.blendedRoasAfter,
+    1,
+  );
+
   return (
     <section
-      className="tool-card accent-blue"
+      className="tool-card accent-amber"
       data-testid="reallocation-card"
       aria-label="Budget reallocation proposal"
     >
@@ -121,69 +134,69 @@ export function ReallocationCard({
             {`Shift $${formatBudget(output.amountPerDay)}/day from ${fromLabel} to ${toLabel}`}
           </h3>
         </div>
-        <span className="pill tabular-nums">
+        <span
+          className={`pill tabular-nums ${
+            roasLift >= 0 ? 'pill-green' : 'pill-amber'
+          }`}
+        >
           {`Projected ROAS: ${output.blendedRoasBefore.toFixed(2)}x → ${output.blendedRoasAfter.toFixed(2)}x`}
         </span>
       </div>
 
-      <div className="reallocation-grid tabular-nums">
-        <div className="reallocation-panel">
-          <div className="panel-heading">Current daily budget</div>
-          <div className="comparison-row">
-            <div>
-              <div className="cell-primary">{fromLabel}</div>
-              {output.fromChannel ? (
-                <div className="cell-secondary">
-                  {output.fromChannel} · {output.before.fromRoas.toFixed(2)}x ROAS
-                </div>
-              ) : null}
-            </div>
-            <strong>${formatBudget(output.before.fromDailyBudget)}/day</strong>
-          </div>
-          <div className="comparison-row">
-            <div>
-              <div className="cell-primary">{toLabel}</div>
-              {output.toChannel ? (
-                <div className="cell-secondary">
-                  {output.toChannel} · {output.before.toRoas.toFixed(2)}x ROAS
-                </div>
-              ) : null}
-            </div>
-            <strong>${formatBudget(output.before.toDailyBudget)}/day</strong>
-          </div>
-          <div className="comparison-row comparison-total">
-            <span>Portfolio blended ROAS</span>
-            <strong>{output.blendedRoasBefore.toFixed(2)}x</strong>
-          </div>
-        </div>
+      <div className="reallocation-chart-panel" data-testid="reallocation-budget-chart">
+        <BeforeAfterBars
+          ariaLabel={`Daily budget shift of $${formatBudget(output.amountPerDay)} per day from ${fromLabel} to ${toLabel}`}
+          items={[
+            {
+              id: `from-${output.fromCampaign}`,
+              label: fromLabel,
+              sublabel: output.fromChannel
+                ? `${output.fromChannel} · ${output.before.fromRoas.toFixed(2)}x ROAS`
+                : `${output.before.fromRoas.toFixed(2)}x ROAS`,
+              beforeValue: output.before.fromDailyBudget,
+              afterValue: output.after.fromDailyBudget,
+              beforeText: `$${formatBudget(output.before.fromDailyBudget)}/day`,
+              afterText: `$${formatBudget(output.after.fromDailyBudget)}/day`,
+              deltaText: `-$${formatBudget(output.amountPerDay)}/day`,
+              deltaTone: 'negative',
+              color: getChannelColorVar(output.fromChannel || output.fromCampaign),
+            },
+            {
+              id: `to-${output.toCampaign}`,
+              label: toLabel,
+              sublabel: output.toChannel
+                ? `${output.toChannel} · ${output.before.toRoas.toFixed(2)}x ROAS`
+                : `${output.before.toRoas.toFixed(2)}x ROAS`,
+              beforeValue: output.before.toDailyBudget,
+              afterValue: output.after.toDailyBudget,
+              beforeText: `$${formatBudget(output.before.toDailyBudget)}/day`,
+              afterText: `$${formatBudget(output.after.toDailyBudget)}/day`,
+              deltaText: `+$${formatBudget(output.amountPerDay)}/day`,
+              deltaTone: 'positive',
+              color: getChannelColorVar(output.toChannel || output.toCampaign),
+            },
+          ]}
+        />
 
-        <div className="reallocation-panel reallocation-panel-after">
-          <div className="panel-heading">Proposed daily budget</div>
-          <div className="comparison-row">
-            <div>
-              <div className="cell-primary">{fromLabel}</div>
-              {output.fromChannel ? (
-                <div className="cell-secondary">
-                  {output.fromChannel} · {output.after.fromRoas.toFixed(2)}x ROAS
-                </div>
-              ) : null}
-            </div>
-            <strong>${formatBudget(output.after.fromDailyBudget)}/day</strong>
-          </div>
-          <div className="comparison-row">
-            <div>
-              <div className="cell-primary">{toLabel}</div>
-              {output.toChannel ? (
-                <div className="cell-secondary">
-                  {output.toChannel} · {output.after.toRoas.toFixed(2)}x ROAS
-                </div>
-              ) : null}
-            </div>
-            <strong>${formatBudget(output.after.toDailyBudget)}/day</strong>
-          </div>
-          <div className="comparison-row comparison-total">
-            <span>Projected blended ROAS</span>
-            <strong>{output.blendedRoasAfter.toFixed(2)}x</strong>
+        <div className="reallocation-roas-compare">
+          <div className="chart-section-label">Portfolio blended ROAS impact</div>
+          <div className="chart-bar-stack">
+            <BarRow
+              label="Current blended ROAS"
+              value={output.blendedRoasBefore}
+              maxValue={maxRoasScale}
+              valueText={`${output.blendedRoasBefore.toFixed(2)}x`}
+              color="#94A3B8"
+              compact
+            />
+            <BarRow
+              label="Projected blended ROAS"
+              value={output.blendedRoasAfter}
+              maxValue={maxRoasScale}
+              valueText={`${output.blendedRoasAfter.toFixed(2)}x (${roasLift >= 0 ? '+' : ''}${roasLift.toFixed(2)}x)`}
+              color={roasLift >= 0 ? 'var(--accent-green)' : 'var(--accent-amber)'}
+              compact
+            />
           </div>
         </div>
       </div>
@@ -202,40 +215,23 @@ export function ReallocationCard({
                 {`${output.simulation.trials.toLocaleString('en-US')}-trial Monte Carlo simulation calibrated from historical daily variance`}
               </div>
             </div>
-            <span className="pill badge-green" data-testid="forecast-lift-probability">
+            <span className="pill pill-green" data-testid="forecast-lift-probability">
               {`${Math.round(output.simulation.probabilityOfPositiveLiftPct)}% chance of positive lift`}
             </span>
           </div>
 
-          <div className="forecast-grid">
-            <div className="forecast-cell">
-              <span className="forecast-label">Conservative (P10)</span>
-              <strong className="forecast-value">
-                {formatSignedCurrency(output.simulation.incrementalPipelineP10)}
-              </strong>
-              <span className="forecast-sub">
-                {`${output.simulation.blendedRoasP10.toFixed(2)}x blended ROAS`}
-              </span>
-            </div>
-            <div className="forecast-cell forecast-cell-median">
-              <span className="forecast-label">Expected (P50)</span>
-              <strong className="forecast-value">
-                {formatSignedCurrency(output.simulation.incrementalPipelineP50)}
-              </strong>
-              <span className="forecast-sub">
-                {`${output.simulation.blendedRoasP50.toFixed(2)}x blended ROAS`}
-              </span>
-            </div>
-            <div className="forecast-cell">
-              <span className="forecast-label">Upside (P90)</span>
-              <strong className="forecast-value">
-                {formatSignedCurrency(output.simulation.incrementalPipelineP90)}
-              </strong>
-              <span className="forecast-sub">
-                {`${output.simulation.blendedRoasP90.toFixed(2)}x blended ROAS`}
-              </span>
-            </div>
-          </div>
+          <RangeBar
+            p10={output.simulation.incrementalPipelineP10}
+            p50={output.simulation.incrementalPipelineP50}
+            p90={output.simulation.incrementalPipelineP90}
+            p10Text={formatSignedCurrency(output.simulation.incrementalPipelineP10)}
+            p50Text={formatSignedCurrency(output.simulation.incrementalPipelineP50)}
+            p90Text={formatSignedCurrency(output.simulation.incrementalPipelineP90)}
+            p10Sub={`${output.simulation.blendedRoasP10.toFixed(2)}x blended ROAS`}
+            p50Sub={`${output.simulation.blendedRoasP50.toFixed(2)}x blended ROAS`}
+            p90Sub={`${output.simulation.blendedRoasP90.toFixed(2)}x blended ROAS`}
+            testId="reallocation-range-bar"
+          />
 
           {output.simulation.targetSaturationDragPct > 0 ? (
             <p className="forecast-note">

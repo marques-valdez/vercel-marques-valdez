@@ -112,7 +112,7 @@ export const PLAYBOOKS: readonly PlaybookDefinition[] = [
     prompt:
       'Set up a daily morning pacing and broken-link check across Google Ads, LinkedIn Ads, and Meta Ads with a 15% wasted-spend alert rule and morning brief.',
     tierHint: 'reasoning',
-    accent: 'blue',
+    accent: 'violet',
     actionLabel: 'Set up morning check',
     defaultChannels: ['google_ads', 'linkedin_ads', 'meta_ads'],
     defaultThreshold: 15,

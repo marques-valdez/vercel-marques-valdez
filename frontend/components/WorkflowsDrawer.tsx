@@ -27,6 +27,7 @@ import type {
 } from '@/lib/types';
 import { WorkflowDagView, type DagStepRunState } from './WorkflowDagView';
 import { WorkflowNextSteps } from './WorkflowNextSteps';
+import { WorkflowVisualSummary, resolveChannelTone } from './charts';
 
 interface WorkflowsDrawerProps {
   isOpen: boolean;
@@ -539,11 +540,18 @@ export function WorkflowsDrawer({
                   </div>
 
                   <div className="channel-pill-row">
-                    {(activeWorkflow.channels ?? []).map((ch) => (
-                      <span key={ch} className="pill channel-pill">
-                        {CHANNEL_LABELS[ch] ?? ch}
-                      </span>
-                    ))}
+                    {(activeWorkflow.channels ?? []).map((ch) => {
+                      const tone = resolveChannelTone(ch);
+                      return (
+                        <span key={ch} className="pill channel-pill">
+                          <span
+                            className={`channel-dot channel-dot-${tone}`}
+                            aria-hidden="true"
+                          />
+                          <span>{CHANNEL_LABELS[ch] ?? ch}</span>
+                        </span>
+                      );
+                    })}
                   </div>
 
                   <WorkflowDagView
@@ -575,15 +583,14 @@ export function WorkflowsDrawer({
                   </div>
 
                   {activeDigest ? (
-                    <div
-                      className="digest-preview-box"
-                      data-testid="drawer-workflow-digest-preview"
-                    >
-                      <div className="digest-preview-header">
-                        Sample morning Slack &amp; Google Sheets brief
-                      </div>
-                      <pre className="digest-preview-text">{activeDigest}</pre>
-                    </div>
+                    <WorkflowVisualSummary
+                      digestPreview={activeDigest}
+                      digestSummary={activeDigestSummary}
+                      channels={activeWorkflow.channels ?? []}
+                      threshold={activeWorkflow.threshold}
+                      twinState={twinState}
+                      testId="drawer-workflow-digest-preview"
+                    />
                   ) : null}
 
                   {onRunNextStepPrompt ? (

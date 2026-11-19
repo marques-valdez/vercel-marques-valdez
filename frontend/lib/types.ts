@@ -327,7 +327,7 @@ export interface PlaybookDefinition {
   summary: string;
   prompt: string;
   tierHint: 'fast' | 'reasoning';
-  accent: 'blue' | 'green' | 'amber';
+  accent: 'blue' | 'green' | 'amber' | 'violet';
   actionLabel: string;
   defaultChannels: ChannelId[];
   defaultThreshold: number;

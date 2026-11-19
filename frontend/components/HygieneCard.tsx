@@ -10,6 +10,12 @@
 
 import React, { useState } from 'react';
 import type { DerivedTwinState, HygieneIssue, HygieneToolOutput } from '@/lib/types';
+import {
+  BarRow,
+  StackedShareBar,
+  getChannelColorVar,
+  resolveChannelTone,
+} from './charts';
 
 interface HygieneCardProps {
   state: 'skeleton' | 'completed' | 'error';
@@ -82,6 +88,39 @@ export function HygieneCard({
   const isRemediated =
     appliedLocal || (displayBrokenCount === 0 && displayUtmCount === 0);
 
+  let brokenSpend = 0;
+  let utmSpend = 0;
+  const channelRiskMap = new Map<
+    string,
+    { channel: string; spend: number; broken: number; utm: number }
+  >();
+  for (const item of rawItems) {
+    const risk = Number.isFinite(item.dailySpendAtRisk) ? Math.max(0, item.dailySpendAtRisk) : 0;
+    const isBroken = item.issueType === 'broken_404';
+    if (isBroken) {
+      brokenSpend += risk;
+    } else {
+      utmSpend += risk;
+    }
+    const existing = channelRiskMap.get(item.channel) ?? {
+      channel: item.channel,
+      spend: 0,
+      broken: 0,
+      utm: 0,
+    };
+    existing.spend += risk;
+    if (isBroken) {
+      existing.broken += 1;
+    } else {
+      existing.utm += 1;
+    }
+    channelRiskMap.set(item.channel, existing);
+  }
+  const channelRiskRows = Array.from(channelRiskMap.values()).sort(
+    (a, b) => b.spend - a.spend,
+  );
+  const maxChannelRisk = Math.max(...channelRiskRows.map((row) => row.spend), 1);
+
   const handleApplyClick = async () => {
     setApplying(true);
     setApplyError(null);
@@ -109,11 +148,63 @@ export function HygieneCard({
           <h3 className="tool-card-title">Broken landing pages &amp; UTM tracking issues</h3>
         </div>
         <div className="kpi-cluster tabular-nums">
-          <span className="pill">
+          <span
+            className={
+              isRemediated || output.totalSpendAtRiskPerDay <= 0
+                ? 'pill pill-green'
+                : 'pill pill-danger'
+            }
+          >
             {`$${formatMoney(output.totalSpendAtRiskPerDay)}/day wasted or untagged`}
           </span>
         </div>
       </div>
+
+      {rawItems.length > 0 ? (
+        <div className="hygiene-chart-panel" data-testid="hygiene-risk-chart">
+          <StackedShareBar
+            title="Daily spend impacted by issue type"
+            segments={[
+              {
+                id: 'broken_404',
+                label: 'Broken 404 links',
+                value: brokenSpend,
+                valueText: `$${formatMoney(brokenSpend)}/day`,
+                color: 'var(--accent-red)',
+              },
+              {
+                id: 'utm_issue',
+                label: 'UTM tag issues',
+                value: utmSpend,
+                valueText: `$${formatMoney(utmSpend)}/day`,
+                color: 'var(--accent-amber)',
+              },
+            ]}
+          />
+          {channelRiskRows.length > 0 ? (
+            <div className="hygiene-channel-bars">
+              <div className="chart-section-label">Spend at risk by channel</div>
+              <div className="chart-bar-stack">
+                {channelRiskRows.map((row) => (
+                  <BarRow
+                    key={row.channel}
+                    label={row.channel}
+                    sublabel={`${row.broken} broken · ${row.utm} UTM`}
+                    value={row.spend}
+                    maxValue={maxChannelRisk}
+                    valueText={`$${formatMoney(row.spend)}/day`}
+                    color={
+                      row.broken > 0
+                        ? 'var(--accent-red)'
+                        : getChannelColorVar(row.channel)
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {rawItems.length > 0 ? (
         <div className="table-scroll">
@@ -130,28 +221,42 @@ export function HygieneCard({
               </tr>
             </thead>
             <tbody>
-              {rawItems.map((item) => (
-                <tr key={item.issueId}>
-                  <td>
-                    <span className="pill channel-pill">{item.channel}</span>
-                  </td>
-                  <td>
-                    <div className="cell-primary">{item.campaignName}</div>
-                    <div className="cell-secondary">{item.adGroupId}</div>
-                  </td>
-                  <td>
-                    <span className="pill channel-pill">
-                      {item.issueType === 'broken_404'
-                        ? 'Broken 404 link'
-                        : 'UTM tag issue'}
-                    </span>
-                  </td>
-                  <td className="mono-text cell-truncate" title={item.value}>
-                    {item.value}
-                  </td>
-                  <td className="num">${formatMoney(item.dailySpendAtRisk)}</td>
-                </tr>
-              ))}
+              {rawItems.map((item) => {
+                const tone = resolveChannelTone(item.channel);
+                const isBroken = item.issueType === 'broken_404';
+                return (
+                  <tr key={item.issueId}>
+                    <td>
+                      <span className="pill channel-pill">
+                        <span
+                          className={`channel-dot channel-dot-${tone}`}
+                          aria-hidden="true"
+                        />
+                        <span>{item.channel}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <div className="cell-primary">{item.campaignName}</div>
+                      <div className="cell-secondary">{item.adGroupId}</div>
+                    </td>
+                    <td>
+                      <span
+                        className={
+                          isBroken ? 'pill pill-danger' : 'pill pill-amber'
+                        }
+                      >
+                        {isBroken ? 'Broken 404 link' : 'UTM tag issue'}
+                      </span>
+                    </td>
+                    <td className="mono-text cell-truncate" title={item.value}>
+                      {item.value}
+                    </td>
+                    <td className="num metric-danger-cell">
+                      ${formatMoney(item.dailySpendAtRisk)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
