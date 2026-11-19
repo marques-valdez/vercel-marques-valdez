@@ -38,6 +38,11 @@ import { VercelArchitectureStrip } from './VercelArchitectureStrip';
 import { WorkflowCard } from './WorkflowCard';
 import { WorkflowsDrawer } from './WorkflowsDrawer';
 import { MarkdownText } from './MarkdownText';
+import { TurnFollowUps } from './TurnFollowUps';
+import {
+  buildChannelDrilldownPrompt,
+  buildTurnFollowUps,
+} from '@/lib/follow-ups';
 import {
   clearStoredChatMessages,
   readStoredChatMessages,
@@ -75,6 +80,9 @@ import type {
   AgentStatusData,
   BackendAlert,
   ChannelDelta,
+  ChannelId,
+  ChannelTrendSeries,
+  ChannelTrendsResponse,
   DerivedTwinState,
   HealthStatus,
   HygieneToolOutput,
@@ -148,6 +156,9 @@ export function WorkspaceClient({
 }: WorkspaceClientProps) {
   const [twinState, setTwinState] = useState<DerivedTwinState | null>(null);
   const [channelDeltas, setChannelDeltas] = useState<Record<string, ChannelDelta>>({});
+  const [channelTrends, setChannelTrends] = useState<
+    Partial<Record<ChannelId, ChannelTrendSeries>>
+  >({});
   const [twinError, setTwinError] = useState<string | null>(null);
   const [backendAlert, setBackendAlert] = useState<BackendAlert | null>(null);
   const [syncWarning, setSyncWarning] = useState<BackendAlert | null>(null);
@@ -248,6 +259,24 @@ export function WorkspaceClient({
     setSavedWorkflows(readStoredWorkflows());
     void loadTwin();
   }, [loadTwin]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/agent/trends?days=30', { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as ChannelTrendsResponse;
+        if (!cancelled && data?.channels) {
+          setChannelTrends(data.channels);
+        }
+      })
+      .catch(() => {
+        // Trend sparklines remain hidden if the trends endpoint is unreachable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (architectMode && !health && !healthLoading) {
@@ -802,7 +831,8 @@ export function WorkspaceClient({
           [decisionKey]: 'approved',
         }));
         clearError();
-        const approvalText = `Approved budget shift from ${proposal.fromCampaignName || proposal.fromCampaign} to ${proposal.toCampaignName || proposal.toCampaign}.`;
+        const formattedShift = Math.round(proposal.amountPerDay).toLocaleString('en-US');
+        const approvalText = `Approved $${formattedShift}/day budget shift from ${proposal.fromCampaignName || proposal.fromCampaign} to ${proposal.toCampaignName || proposal.toCampaign}.`;
         lastTierHintRef.current = 'reasoning';
         lastUserPromptRef.current = approvalText;
         void sendMessage(
@@ -957,6 +987,24 @@ export function WorkspaceClient({
     [clearError, isStreaming, sendMessage],
   );
 
+  const handleInspectChannel = useCallback(
+    (
+      channelName: string,
+      focus: 'overview' | 'broken_404' | 'utm_violation',
+    ) => {
+      const { prompt, tierHint } = buildChannelDrilldownPrompt(channelName, focus);
+      handleWorkflowPromptAction(prompt, tierHint);
+    },
+    [handleWorkflowPromptAction],
+  );
+
+  const handleOptimizePortfolio = useCallback(() => {
+    handleWorkflowPromptAction(
+      'Audit my portfolio ROAS and propose a budget shift from our weakest channel to our highest-performing channel.',
+      'reasoning',
+    );
+  }, [handleWorkflowPromptAction]);
+
   const handleToggleArchitectMode = useCallback(() => {
     setArchitectMode((prev) => {
       const next = !prev;
@@ -1109,6 +1157,8 @@ export function WorkspaceClient({
             errorText={part.state === 'output-error' ? part.errorText : undefined}
             decision={decision}
             disabled={isStreaming}
+            architectMode={architectMode}
+            getMutations={readStoredMutations}
             onApprove={(proposal) =>
               handleApproveReallocation(proposal, part.toolCallId)
             }
@@ -1188,6 +1238,8 @@ export function WorkspaceClient({
               errorText={errText}
               decision={decision}
               disabled={isStreaming}
+              architectMode={architectMode}
+              getMutations={readStoredMutations}
               onApprove={(proposal) =>
                 handleApproveReallocation(proposal, part.toolCallId)
               }
@@ -1288,8 +1340,12 @@ export function WorkspaceClient({
           twinState={twinState}
           errorText={twinError}
           deltas={channelDeltas}
+          trends={channelTrends}
+          disabled={isStreaming}
           onRetry={() => void loadTwin()}
           onReset={() => void handleResetDemo()}
+          onInspectChannel={handleInspectChannel}
+          onOptimizePortfolio={handleOptimizePortfolio}
         />
 
         {messages.length === 0 ? (
@@ -1447,6 +1503,14 @@ export function WorkspaceClient({
                   }
 
                   const showActiveStatus = isStreaming && isLastMessage;
+                  const followUpChips =
+                    isLastMessage && !isStreaming && !error && !backendAlert
+                      ? buildTurnFollowUps({
+                          parts: message.parts,
+                          twinState,
+                          proposalDecisions,
+                        })
+                      : [];
                   const progressSteps =
                     latestAgentStatus?.steps && latestAgentStatus.steps.length > 0
                       ? latestAgentStatus.steps
@@ -1488,6 +1552,14 @@ export function WorkspaceClient({
                         ) : null}
 
                         {renderedParts}
+
+                        {followUpChips.length > 0 ? (
+                          <TurnFollowUps
+                            chips={followUpChips}
+                            disabled={isStreaming}
+                            onSelect={handleWorkflowPromptAction}
+                          />
+                        ) : null}
 
                         {wasTruncated && !isStreaming ? (
                           <div

@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db import fetch_campaign_daily_series, is_database_configured
 from app.sandbox_runner import (
+    is_sandbox_available,
     run_monte_carlo_reallocation_in_sandbox,
     run_sandbox_query,
 )
@@ -365,7 +366,7 @@ def build_agent_tools(
             portfolio_blended_roas=current_state.totals.blendedRoas,
             campaign_series=series_from_db,
             data_dir=data_dir,
-            prefer_in_process=not is_database_configured(),
+            prefer_in_process=not (is_database_configured() or is_sandbox_available()),
         )
 
         digest = hashlib.sha256(

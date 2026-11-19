@@ -1877,3 +1877,325 @@ test('tool-errors suppresses superseded tool retry errors in default mode while 
   assert.equal(shouldSuppressRetriedToolError(retriedParts[2], succeeded, false), false);
   assert.equal(shouldSuppressRetriedToolError(retriedParts[2], succeeded, true), false);
 });
+
+
+test('computeClientReallocationPreview conserves daily budget and ReallocationCard renders interactive slider', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const {
+    computeClientReallocationPreview,
+    ReallocationCard,
+  } = loadTsModule('components/ReallocationCard.tsx');
+
+  const sampleProposal = {
+    proposalId: 'prop-slider-1',
+    fromCampaign: 'CMP-10',
+    fromCampaignName: 'LinkedIn ABM Executive',
+    fromChannel: 'LinkedIn Ads',
+    toCampaign: 'CMP-20',
+    toCampaignName: 'Meta Remarketing Core',
+    toChannel: 'Meta Ads',
+    amountPerDay: 300,
+    blendedRoasBefore: 3.1,
+    blendedRoasAfter: 3.35,
+    rationale: 'Shift budget toward stronger recent conversion efficiency.',
+    requiresConfirmation: true,
+    before: {
+      fromDailyBudget: 1200,
+      toDailyBudget: 900,
+      fromRoas: 1.4,
+      toRoas: 4.5,
+      totalDailyBudget: 5000,
+    },
+    after: {
+      fromDailyBudget: 900,
+      toDailyBudget: 1200,
+      totalDailyBudget: 5000,
+    },
+    simulation: {
+      horizonDays: 30,
+      trials: 2000,
+      mode: 'sandbox',
+      sandboxMs: 240,
+      incrementalPipelineP10: 1400,
+      incrementalPipelineP50: 4200,
+      incrementalPipelineP90: 7100,
+      blendedRoasP10: 3.15,
+      blendedRoasP50: 3.35,
+      blendedRoasP90: 3.55,
+      probabilityOfPositiveLiftPct: 92,
+      targetSaturationDragPct: 4.2,
+    },
+  };
+
+  const preview600 = computeClientReallocationPreview(sampleProposal, 600);
+  assert.equal(preview600.amountPerDay, 600);
+  assert.equal(
+    preview600.after.fromDailyBudget + preview600.after.toDailyBudget,
+    sampleProposal.before.fromDailyBudget + sampleProposal.before.toDailyBudget,
+  );
+  assert.equal(preview600.after.fromDailyBudget, 600);
+  assert.equal(preview600.after.toDailyBudget, 1500);
+  assert.ok(preview600.blendedRoasAfter > sampleProposal.blendedRoasAfter);
+
+  const defaultHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, {
+      state: 'output-available',
+      output: sampleProposal,
+      decision: null,
+      architectMode: false,
+      onApprove: () => {},
+      onDecline: () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(defaultHtml.includes('data-testid="reallocation-whatif-slider"'), true);
+  assert.equal(defaultHtml.includes('data-testid="reallocation-preset-25"'), true);
+  assert.equal(defaultHtml.includes('data-testid="reallocation-preset-100"'), true);
+  assert.equal(defaultHtml.includes('data-testid="reallocation-forecast-band"'), true);
+  assert.equal(defaultHtml.includes('Vercel Sandbox microVM'), false);
+
+  const xrayHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, {
+      state: 'output-available',
+      output: sampleProposal,
+      decision: null,
+      architectMode: true,
+      onApprove: () => {},
+      onDecline: () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(xrayHtml.includes('Vercel Sandbox microVM'), true);
+  assert.equal(xrayHtml.includes('240ms'), true);
+});
+
+
+test('TrendSparkline, DailyAnomalyChart, and SandboxCard render daily variance geometry', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const {
+    computeSparklineGeometry,
+    TrendSparkline,
+    computeAnomalySeries,
+    DailyAnomalyChart,
+  } = loadTsModule('components/charts.tsx');
+  const { SandboxCard } = loadTsModule('components/SandboxCard.tsx');
+
+  const points = [
+    { date: '2026-10-19', spend: 500, revenue: 1500, roas: 3.0 },
+    { date: '2026-10-20', spend: 520, revenue: 1820, roas: 3.5 },
+    { date: '2026-10-21', spend: 540, revenue: 2160, roas: 4.0 },
+  ];
+  const geom = computeSparklineGeometry(points, 180, 38);
+  assert.equal(geom.coords.length, 3);
+  assert.equal(geom.linePath.startsWith('M '), true);
+  assert.equal(geom.areaPath.endsWith(' Z'), true);
+
+  const sparkHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(TrendSparkline, {
+      series: {
+        channelId: 'meta_ads',
+        channel: 'Meta Ads',
+        firstWindowRoas: 3.0,
+        lastWindowRoas: 4.0,
+        deltaPct: 33.3,
+        points,
+      },
+      color: 'var(--accent-green)',
+      testId: 'spark-test',
+    }),
+  );
+  assert.equal(sparkHtml.includes('data-testid="spark-test"'), true);
+  assert.equal(sparkHtml.includes('trend-delta-up'), true);
+  assert.equal(sparkHtml.includes('+33.3%'), true);
+
+  // Unsorted anomaly rows get sorted chronologically
+  const anomalyRows = [
+    {
+      date: '2026-11-12',
+      channel: 'Google Ads',
+      total_spend: 2600,
+      avg_daily_spend: 1800,
+      spend_delta_pct: 44.4,
+      roas: 2.9,
+    },
+    {
+      date: '2026-11-03',
+      channel: 'LinkedIn Ads',
+      total_spend: 900,
+      avg_daily_spend: 1500,
+      spend_delta_pct: -40.0,
+      roas: 1.5,
+    },
+  ];
+  const series = computeAnomalySeries(anomalyRows);
+  assert.equal(series.items.length, 2);
+  assert.equal(series.items[0].date, '2026-11-03');
+  assert.equal(series.items[1].date, '2026-11-12');
+
+  const chartHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(DailyAnomalyChart, { rows: anomalyRows }),
+  );
+  assert.equal(chartHtml.includes('data-testid="daily-anomaly-chart"'), true);
+  assert.equal(chartHtml.includes('Nov 3'), true);
+  assert.equal(chartHtml.includes('Nov 12'), true);
+
+  const sandboxHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(SandboxCard, {
+      state: 'output-available',
+      output: {
+        templateId: 'daily_pacing_anomalies',
+        rowsScanned: 24,
+        executionMs: 14,
+        sandboxMode: 'in-process',
+        sql: 'SELECT * FROM relay_daily_performance',
+        table: anomalyRows,
+      },
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(sandboxHtml.includes('data-testid="daily-anomaly-chart"'), true);
+});
+
+
+test('buildTurnFollowUps and TurnFollowUps generate grounded non-workflow follow-ups and suppress workflow turns', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const {
+    buildChannelDrilldownPrompt,
+    buildTurnFollowUps,
+  } = loadTsModule('lib/follow-ups.ts');
+  const { TurnFollowUps } = loadTsModule('components/TurnFollowUps.tsx');
+
+  const drill = buildChannelDrilldownPrompt('LinkedIn Ads', 'broken_404');
+  assert.equal(drill.tierHint, 'fast');
+  assert.equal(drill.prompt.includes('LinkedIn Ads'), true);
+  assert.equal(drill.prompt.includes('404'), true);
+
+  const sampleTwin = {
+    channels: [
+      {
+        channelId: 'linkedin_ads',
+        channel: 'LinkedIn Ads',
+        dailyBudget: 1500,
+        roas: 1.4,
+        brokenCreatives: 2,
+        utmViolations: 1,
+      },
+      {
+        channelId: 'meta_ads',
+        channel: 'Meta Ads',
+        dailyBudget: 2100,
+        roas: 4.1,
+        brokenCreatives: 0,
+        utmViolations: 2,
+      },
+    ],
+    totals: { dailyBudget: 3600, monthlyBudget: 108000, blendedRoas: 2.98 },
+    baseline: { dailyBudget: 3600, monthlyBudget: 108000, blendedRoas: 2.98 },
+    activeMutationsCount: 0,
+  };
+
+  const hygieneChips = buildTurnFollowUps({
+    parts: [
+      {
+        type: 'tool-audit_campaign_hygiene',
+        toolCallId: 'h1',
+        state: 'output-available',
+        output: { brokenCount: 2, utmCount: 3, totalSpendAtRiskPerDay: 720 },
+      },
+    ],
+    twinState: sampleTwin,
+    proposalDecisions: {},
+  });
+  assert.ok(hygieneChips.length >= 2 && hygieneChips.length <= 3);
+
+  const workflowChips = buildTurnFollowUps({
+    parts: [
+      {
+        type: 'tool-compile_workflow',
+        toolCallId: 'w1',
+        state: 'output-available',
+        output: { workflowId: 'wf-1', name: 'Daily guardrail' },
+      },
+    ],
+    twinState: sampleTwin,
+    proposalDecisions: {},
+  });
+  assert.equal(workflowChips.length, 0);
+
+  const renderedFollowUps = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(TurnFollowUps, {
+      chips: hygieneChips,
+      onSelect: () => {},
+    }),
+  );
+  assert.equal(renderedFollowUps.includes('data-testid="turn-follow-ups"'), true);
+  assert.equal(renderedFollowUps.includes('turn-followup-chip'), true);
+});
+
+
+test('ChannelHealthStrip interactive triggers and interpolateEaseOut behave cleanly', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { interpolateEaseOut } = loadTsModule('lib/use-animated-number.ts');
+  const { ChannelHealthStrip } = loadTsModule('components/ChannelHealthStrip.tsx');
+
+  assert.equal(interpolateEaseOut(0, 100, 0), 0);
+  assert.equal(interpolateEaseOut(0, 100, 1), 100);
+  const mid = interpolateEaseOut(0, 100, 0.5);
+  assert.ok(mid > 50 && mid < 100);
+
+  const twin = {
+    channels: [
+      {
+        channelId: 'google_ads',
+        channel: 'Google Ads',
+        dailyBudget: 1800,
+        roas: 3.1,
+        brokenCreatives: 1,
+        utmViolations: 0,
+      },
+      {
+        channelId: 'meta_ads',
+        channel: 'Meta Ads',
+        dailyBudget: 2200,
+        roas: 4.2,
+        brokenCreatives: 0,
+        utmViolations: 2,
+      },
+    ],
+    totals: { dailyBudget: 4000, monthlyBudget: 120000, blendedRoas: 3.7 },
+    baseline: { dailyBudget: 4000, monthlyBudget: 120000, blendedRoas: 3.7 },
+    activeMutationsCount: 0,
+  };
+
+  const stripHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ChannelHealthStrip, {
+      twinState: twin,
+      errorText: null,
+      trends: {
+        meta_ads: {
+          channelId: 'meta_ads',
+          channel: 'Meta Ads',
+          firstWindowRoas: 3.1,
+          lastWindowRoas: 4.2,
+          deltaPct: 35.5,
+          points: [
+            { date: '2026-10-19', spend: 500, revenue: 1550, roas: 3.1 },
+            { date: '2026-11-17', spend: 600, revenue: 2520, roas: 4.2 },
+          ],
+        },
+      },
+      onRetry: () => {},
+      onReset: () => {},
+      onInspectChannel: () => {},
+      onOptimizePortfolio: () => {},
+    }),
+  );
+  assert.equal(stripHtml.includes('health-channel-trigger'), true);
+  assert.equal(stripHtml.includes('health-chip-btn'), true);
+  assert.equal(stripHtml.includes('data-testid="trend-sparkline-meta_ads"'), true);
+  assert.equal(stripHtml.includes('data-testid="optimize-mix-btn"'), true);
+});

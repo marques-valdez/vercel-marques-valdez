@@ -3839,3 +3839,454 @@ textarea {
     transition: none;
   }
 }
+
+/* ==========================================================================
+   V5 Interactive Delight: Channel Sparklines, Drill-Downs, What-If Slider,
+   Chronological Anomaly Chart, and Smart Turn Follow-Ups
+   ========================================================================== */
+
+.health-channel-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  background: transparent;
+  border: none;
+  padding: 0.125rem 0.25rem;
+  margin: -0.125rem -0.25rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: background-color 120ms ease;
+}
+
+.health-channel-trigger:hover:not(:disabled) {
+  background-color: #FAFAFA;
+}
+
+.health-channel-trigger:hover:not(:disabled) .health-channel-name {
+  text-decoration: underline;
+  text-decoration-color: #0070F3;
+  text-underline-offset: 3px;
+}
+
+.health-channel-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.health-chip-btn {
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.health-chip-btn:hover:not(:disabled) {
+  border-color: currentColor;
+}
+
+.health-chip-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.health-totals-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.health-optimize-btn {
+  background: transparent;
+  border: 1px solid #EAEAEA;
+  border-radius: 0.375rem;
+  padding: 0.1875rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #0070F3;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.health-optimize-btn:hover:not(:disabled) {
+  border-color: #0070F3;
+  background-color: #FAFAFA;
+}
+
+.health-optimize-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@keyframes health-flash-ring {
+  0% {
+    box-shadow: 0 0 0 2px rgba(0, 112, 243, 0.28);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 112, 243, 0);
+  }
+}
+
+.health-item-flash {
+  animation: health-flash-ring 700ms ease-out;
+}
+
+/* 30-day Channel Trend Sparklines */
+.trend-sparkline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.25rem 0 0.125rem;
+}
+
+.trend-sparkline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.6875rem;
+}
+
+.trend-sparkline-caption {
+  color: #666666;
+  font-weight: 500;
+}
+
+.trend-sparkline-hover-val {
+  color: #171717;
+  font-weight: 600;
+}
+
+.trend-delta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  font-weight: 600;
+}
+
+.trend-delta-up {
+  color: #0E8A16;
+}
+
+.trend-delta-down {
+  color: #D97706;
+}
+
+.trend-delta-flat {
+  color: #666666;
+}
+
+.trend-sparkline-canvas {
+  position: relative;
+  width: 100%;
+  height: 36px;
+}
+
+.trend-sparkline-svg {
+  width: 100%;
+  height: 36px;
+  display: block;
+  overflow: visible;
+  cursor: crosshair;
+}
+
+.trend-sparkline-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: #FFFFFF;
+  border: 2px solid #0070F3;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.trend-sparkline-dot-active {
+  width: 8px;
+  height: 8px;
+}
+
+/* What-If Budget Slider */
+.reallocation-slider-panel {
+  background-color: #FAFAFA;
+  border: 1px solid #EAEAEA;
+  border-radius: 0.5rem;
+  padding: 0.75rem 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.reallocation-slider-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.reallocation-slider-label {
+  font-weight: 600;
+  color: #171717;
+}
+
+.reallocation-slider-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.reallocation-slider-amount {
+  font-weight: 600;
+  color: #171717;
+}
+
+.reallocation-reset-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #0070F3;
+  cursor: pointer;
+}
+
+.reallocation-reset-link:hover {
+  text-decoration: underline;
+}
+
+.reallocation-range-input {
+  width: 100%;
+  accent-color: #0070F3;
+  cursor: pointer;
+}
+
+.reallocation-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.reallocation-preset-cap {
+  font-size: 0.75rem;
+  color: #666666;
+}
+
+.reallocation-preset-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.forecast-band-updating {
+  opacity: 0.85;
+  transition: opacity 140ms ease;
+}
+
+.forecast-badge-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+/* Chronological Spend-Anomaly Variance Chart */
+.anomaly-chart {
+  background-color: #FAFAFA;
+  border: 1px solid #EAEAEA;
+  border-radius: 0.5rem;
+  padding: 0.75rem 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.anomaly-chart-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.anomaly-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4375rem;
+  font-size: 0.8125rem;
+  color: #171717;
+  margin-top: 0.25rem;
+}
+
+.anomaly-readout-sep,
+.anomaly-readout-roas {
+  color: #666666;
+}
+
+.anomaly-plot-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.anomaly-y-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 0.6875rem;
+  color: #666666;
+  text-align: right;
+  min-width: 2.375rem;
+  padding: 0.125rem 0;
+}
+
+.anomaly-plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 112px;
+  display: flex;
+  align-items: stretch;
+}
+
+.anomaly-baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background-color: #D4D4D4;
+  pointer-events: none;
+}
+
+.anomaly-bars {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.anomaly-bar-slot {
+  flex: 1;
+  min-width: 6px;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.anomaly-bar-slot:hover,
+.anomaly-bar-slot-active {
+  background-color: rgba(0, 112, 243, 0.08);
+}
+
+.anomaly-bar-half {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.anomaly-bar-half-top {
+  align-items: flex-end;
+}
+
+.anomaly-bar-half-bottom {
+  align-items: flex-start;
+}
+
+.anomaly-bar {
+  width: 72%;
+  max-width: 16px;
+  min-width: 3px;
+  border-radius: 2px;
+}
+
+.anomaly-x-axis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.6875rem;
+  color: #666666;
+  padding-left: 2.875rem;
+}
+
+/* Smart Turn Follow-Ups */
+.turn-followups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.turn-followups-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #666666;
+}
+
+.turn-followups-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4375rem;
+}
+
+.turn-followup-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.3125rem 0.6875rem;
+  border-radius: 9999px;
+  border: 1px solid #EAEAEA;
+  background-color: #FFFFFF;
+  color: #171717;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.turn-followup-chip:hover:not(:disabled) {
+  border-color: #0070F3;
+  background-color: #FAFAFA;
+}
+
+.turn-followup-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.turn-followup-blue {
+  border-color: #BFDBFE;
+}
+
+.turn-followup-amber {
+  border-color: #FDE68A;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .health-item-flash {
+    animation: none;
+  }
+
+  .health-channel-trigger,
+  .health-chip-btn,
+  .health-optimize-btn,
+  .forecast-band-updating,
+  .turn-followup-chip {
+    transition: none;
+  }
+}

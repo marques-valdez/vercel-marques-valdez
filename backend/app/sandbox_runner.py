@@ -41,9 +41,20 @@ from vercel import sandbox
 from vercel.oidc.credentials import get_credentials
 from vercel.sandbox import NetworkPolicy
 
-from app.db import is_database_configured, run_postgres_analytics_query
+from app.db import (
+    fetch_channel_daily_trends,
+    is_database_configured,
+    run_postgres_analytics_query,
+)
 from app.sql_templates import TemplateId, compile_sql_template
-from app.twin import EXPECTED_CSV_COLUMNS, get_rows_csv_text
+from app.twin import (
+    CANONICAL_CHANNEL_ORDER,
+    CHANNEL_ID_TO_NAME,
+    CHANNEL_LABELS,
+    EXPECTED_CSV_COLUMNS,
+    ChannelId,
+    get_rows_csv_text,
+)
 
 SANDBOX_TIMEOUT_SECONDS: Final[int] = 30
 SANDBOX_KILL_AFTER_SECONDS: Final[int] = 25
@@ -280,6 +291,145 @@ class MonteCarloSimulationResult(BaseModel):
     blendedRoasP90: float
     probabilityOfPositiveLiftPct: float
     targetSaturationDragPct: float
+
+
+class ChannelTrendPoint(BaseModel):
+    """Single day spend, pipeline, and ROAS point for one channel."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    date: str
+    spend: float
+    pipelineValue: float
+    roas: float
+
+
+class ChannelTrendSeries(BaseModel):
+    """Trailing N-day trend summary and chronological series for one channel."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    channelId: ChannelId
+    channel: str
+    firstWindowRoas: float
+    lastWindowRoas: float
+    deltaPct: float
+    points: list[ChannelTrendPoint]
+
+
+class ChannelTrendsResponse(BaseModel):
+    """Response contract for GET /api/agent/trends."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    days: int
+    mode: Literal["neon-postgres", "in-process"]
+    channels: dict[ChannelId, ChannelTrendSeries]
+
+
+def _extract_channel_daily_trends_from_csv(
+    csv_text: str,
+    days: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """Aggregate rows.csv into trailing N-day spend/pipeline points per channel."""
+    totals: dict[tuple[str, str], list[float]] = {}
+    dates_seen: set[str] = set()
+    reader = csv.reader(io.StringIO(csv_text, newline=""))
+    next(reader, None)
+    for row in reader:
+        if not row:
+            continue
+        date_str = row[0]
+        channel_name = row[1]
+        spend = float(row[4])
+        pipeline = float(row[7])
+        dates_seen.add(date_str)
+        key = (channel_name, date_str)
+        entry = totals.get(key)
+        if entry is None:
+            totals[key] = [spend, pipeline]
+        else:
+            entry[0] += spend
+            entry[1] += pipeline
+
+    kept_dates = set(sorted(dates_seen)[-days:])
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for (channel_name, date_str), (spend, pipeline) in sorted(totals.items()):
+        if date_str not in kept_dates:
+            continue
+        grouped.setdefault(channel_name, []).append(
+            {
+                "date": date_str,
+                "spend": spend,
+                "pipeline_value": pipeline,
+            }
+        )
+    return grouped
+
+
+def compute_channel_daily_trends(
+    days: int = 30,
+    *,
+    data_dir: Path | None = None,
+) -> ChannelTrendsResponse:
+    """Compute trailing N-day per-channel ROAS time series and 7d-vs-7d delta."""
+    clamped_days = max(7, min(90, int(days)))
+    grouped: dict[str, list[dict[str, Any]]] | None = None
+    mode: Literal["neon-postgres", "in-process"] = "in-process"
+
+    if is_database_configured():
+        try:
+            grouped = fetch_channel_daily_trends(clamped_days, data_dir=data_dir)
+            if grouped is not None:
+                mode = "neon-postgres"
+        except Exception:
+            grouped = None
+            mode = "in-process"
+
+    if grouped is None:
+        csv_text = get_rows_csv_text(data_dir)
+        grouped = _extract_channel_daily_trends_from_csv(csv_text, clamped_days)
+        mode = "in-process"
+
+    channels_out: dict[ChannelId, ChannelTrendSeries] = {}
+    for ch_id in CANONICAL_CHANNEL_ORDER:
+        ch_name = CHANNEL_ID_TO_NAME[ch_id]
+        raw_pts = sorted(grouped.get(ch_name, []), key=lambda item: str(item["date"]))
+        points = [
+            ChannelTrendPoint(
+                date=str(pt["date"]),
+                spend=round(float(pt["spend"]), 2),
+                pipelineValue=round(float(pt["pipeline_value"]), 2),
+                roas=round(
+                    float(pt["pipeline_value"]) / float(pt["spend"]), 2
+                )
+                if float(pt["spend"]) > 0.0
+                else 0.0,
+            )
+            for pt in raw_pts
+        ]
+        win = min(7, len(points))
+        first_spend = sum(p.spend for p in points[:win])
+        first_pipe = sum(p.pipelineValue for p in points[:win])
+        last_spend = sum(p.spend for p in points[-win:]) if win > 0 else 0.0
+        last_pipe = sum(p.pipelineValue for p in points[-win:]) if win > 0 else 0.0
+        first_roas = round(first_pipe / first_spend, 2) if first_spend > 0.0 else 0.0
+        last_roas = round(last_pipe / last_spend, 2) if last_spend > 0.0 else 0.0
+        delta_pct = (
+            round(((last_roas - first_roas) / first_roas) * 100.0, 1)
+            if first_roas > 0.0
+            else 0.0
+        )
+        channels_out[ch_id] = ChannelTrendSeries(
+            channelId=ch_id,
+            channel=CHANNEL_LABELS[ch_id],
+            firstWindowRoas=first_roas,
+            lastWindowRoas=last_roas,
+            deltaPct=0.0 if delta_pct == 0.0 else delta_pct,
+            points=points,
+        )
+
+    return ChannelTrendsResponse(days=clamped_days, mode=mode, channels=channels_out)
 
 
 async def run_sandbox_query(

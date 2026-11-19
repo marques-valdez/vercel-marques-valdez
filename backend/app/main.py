@@ -28,7 +28,7 @@ import time
 from typing import Any, AsyncIterator, Final, Literal, Mapping, Self
 
 import anyio
-from fastapi import Body, FastAPI, Request
+from fastapi import Body, FastAPI, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -46,6 +46,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from app.agent import build_agent_graph
 from app.db import (
+    fetch_campaign_daily_series,
     is_database_configured,
     load_workspace_snapshot,
     normalize_workspace_id,
@@ -58,10 +59,13 @@ from app.db import (
 from app.pricing import get_pricing_source
 from app.router import TierName, route_turn, route_turn_async
 from app.sandbox_runner import (
+    ChannelTrendsResponse,
     SandboxQueryResult,
+    compute_channel_daily_trends,
     is_sandbox_available,
     reset_request_sandbox_budget,
     restore_request_sandbox_budget,
+    run_monte_carlo_reallocation_in_sandbox,
     run_sandbox_query,
 )
 from app.sql_templates import TemplateInputId
@@ -71,6 +75,7 @@ from app.twin import (
     TwinStateRequest,
     _raise_if_non_finite_float,
     compute_twin_state,
+    preview_budget_reallocation,
 )
 from app.ui_messages import (
     MAX_MESSAGES,
@@ -193,11 +198,16 @@ class SlidingWindowRateLimiter:
 
 
 _chat_rate_limiter = SlidingWindowRateLimiter()
+_simulate_rate_limiter = SlidingWindowRateLimiter(
+    max_requests=60,
+    window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+)
 
 
 def reset_rate_limiter() -> None:
     """Clear all sliding-window rate-limiter buckets (used in isolated tests)."""
     _chat_rate_limiter.reset()
+    _simulate_rate_limiter.reset()
 
 
 def extract_client_ip(request: Request) -> str:
@@ -298,6 +308,32 @@ class WorkflowRunRequest(BaseModel):
     def _validate_workflow_spec(self) -> Self:
         normalize_workflow_run_config(self.workflow)
         return self
+
+
+class ReallocationSimulateRequest(BaseModel):
+    """Inbound payload for POST /api/agent/reallocation/simulate."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    fromCampaign: str = Field(min_length=1, max_length=120)
+    toCampaign: str = Field(min_length=1, max_length=120)
+    amountPerDay: float = Field(gt=0.0, allow_inf_nan=False)
+    proposalId: str | None = Field(default=None, max_length=120)
+    mutations: MutationList = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("mutations", "twinMutations"),
+    )
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _reject_invalid_scalars(
+        cls,
+        value: Any,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        _raise_if_non_finite_float(value, cls.__name__)
+        _raise_if_lone_surrogate(value, cls.__name__)
+        return handler(value)
 
 
 class ChatRequest(BaseModel):
@@ -525,6 +561,83 @@ async def twin_state_endpoint(
 ) -> DerivedTwinState:
     _raise_if_lone_surrogate(payload.model_dump(), "TwinStateRequest")
     return compute_twin_state(payload.mutations)
+
+
+@app.get("/api/agent/trends", response_model=ChannelTrendsResponse)
+async def trends_endpoint(
+    days: int = Query(default=30, ge=7, le=90),
+) -> ChannelTrendsResponse:
+    return await anyio.to_thread.run_sync(compute_channel_daily_trends, days)
+
+
+@app.post("/api/agent/reallocation/simulate")
+async def reallocation_simulate_endpoint(
+    request: Request,
+    payload: ReallocationSimulateRequest,
+) -> JSONResponse:
+    allowed, retry_after = _simulate_rate_limiter.check(extract_client_ip(request))
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": (
+                    "Rate limit exceeded for live budget simulations. "
+                    "Please wait a moment before dragging again."
+                )
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    from_ref = payload.fromCampaign.strip()
+    to_ref = payload.toCampaign.strip()
+    try:
+        preview = preview_budget_reallocation(
+            payload.mutations,
+            from_campaign=from_ref,
+            to_campaign=to_ref,
+            amount_per_day=payload.amountPerDay,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"msg": str(exc)}]},
+        )
+
+    current_state = compute_twin_state(payload.mutations)
+    series_from_db = None
+    if is_database_configured():
+        try:
+            series_from_db = await anyio.to_thread.run_sync(
+                lambda: fetch_campaign_daily_series([preview.fromCampaign, preview.toCampaign])
+            )
+        except Exception:
+            series_from_db = None
+
+    budget_token = reset_request_sandbox_budget()
+    try:
+        simulation = await run_monte_carlo_reallocation_in_sandbox(
+            from_campaign=preview.fromCampaign,
+            to_campaign=preview.toCampaign,
+            from_daily_budget=preview.before.fromDailyBudget,
+            to_daily_budget=preview.before.toDailyBudget,
+            from_roas=preview.before.fromRoas,
+            to_roas=preview.before.toRoas,
+            amount_per_day=preview.amountPerDay,
+            portfolio_daily_budget=current_state.totals.dailyBudget,
+            portfolio_blended_roas=current_state.totals.blendedRoas,
+            campaign_series=series_from_db,
+            prefer_in_process=False,
+        )
+    finally:
+        restore_request_sandbox_budget(budget_token)
+
+    return JSONResponse(
+        content={
+            "proposalId": payload.proposalId or "prop_live_sim",
+            **preview.model_dump(),
+            "simulation": simulation.model_dump(),
+        }
+    )
 
 
 @app.post("/api/agent/workflows/run", response_model=None)

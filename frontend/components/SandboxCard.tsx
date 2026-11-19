@@ -12,7 +12,11 @@
 
 import React, { useState } from 'react';
 import type { SandboxStatusData, SandboxToolOutput } from '@/lib/types';
-import { getChannelColorVar, resolveChannelTone } from './charts';
+import {
+  DailyAnomalyChart,
+  getChannelColorVar,
+  resolveChannelTone,
+} from './charts';
 
 interface SandboxCardProps {
   state: 'skeleton' | 'completed' | 'error';
@@ -189,6 +193,11 @@ export function SandboxCard({
 
   const rows = effectiveOutput.table ?? [];
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const isDailyAnomalyView =
+    effectiveOutput.templateId === 'daily_pacing_anomalies' &&
+    rows.length > 0 &&
+    typeof rows[0]?.date === 'string' &&
+    typeof rows[0]?.spend_delta_pct === 'number';
 
   const labelColumn =
     columns.find((col) =>
@@ -285,7 +294,9 @@ export function SandboxCard({
         </p>
       ) : null}
 
-      {barMetricColumn && labelColumn && rows.length > 0 ? (
+      {isDailyAnomalyView ? (
+        <DailyAnomalyChart rows={rows} />
+      ) : barMetricColumn && labelColumn && rows.length > 0 ? (
         <div className="bar-chart-list tabular-nums" aria-label="Comparison bars">
           {rows.map((row, idx) => {
             const label = String(row[labelColumn] ?? `Row ${idx + 1}`);

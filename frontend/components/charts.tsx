@@ -9,9 +9,11 @@
  * identically in Next.js SSR, Node contract tests, and 375px mobile viewports.
  */
 
-import React from 'react';
+import React, { useId, useState } from 'react';
 import type {
   ChannelId,
+  ChannelTrendPoint,
+  ChannelTrendSeries,
   DerivedTwinState,
   WorkflowDigestSummary,
 } from '@/lib/types';
@@ -766,6 +768,467 @@ export function WorkflowVisualSummary({
         </summary>
         <pre className="digest-preview-text">{digestPreview}</pre>
       </details>
+    </div>
+  );
+}
+
+export interface SparklinePointCoord {
+  index: number;
+  x: number;
+  y: number;
+  point: ChannelTrendPoint;
+}
+
+export interface SparklineGeometry {
+  coords: SparklinePointCoord[];
+  linePath: string;
+  areaPath: string;
+  minRoas: number;
+  maxRoas: number;
+  avgY: number;
+}
+
+export function formatShortIsoDate(isoDate: string): string {
+  const parts = isoDate.split('-');
+  if (parts.length !== 3) {
+    return isoDate;
+  }
+  const monthIdx = Number.parseInt(parts[1], 10) - 1;
+  const dayNum = Number.parseInt(parts[2], 10);
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  if (
+    !Number.isFinite(monthIdx) ||
+    !Number.isFinite(dayNum) ||
+    monthIdx < 0 ||
+    monthIdx >= months.length
+  ) {
+    return isoDate;
+  }
+  return `${months[monthIdx]} ${dayNum}`;
+}
+
+export function computeSparklineGeometry(
+  points: ChannelTrendPoint[],
+  width: number = 180,
+  height: number = 38,
+  padX: number = 4,
+  padY: number = 4,
+): SparklineGeometry {
+  if (!points || points.length === 0) {
+    return {
+      coords: [],
+      linePath: '',
+      areaPath: '',
+      minRoas: 0,
+      maxRoas: 0,
+      avgY: height / 2,
+    };
+  }
+
+  const roasVals = points.map((p) => (Number.isFinite(p.roas) ? p.roas : 0));
+  const rawMin = Math.min(...roasVals);
+  const rawMax = Math.max(...roasVals);
+  const span = rawMax - rawMin;
+  const minRoas = span < 0.1 ? Math.max(0, rawMin - 0.5) : rawMin - span * 0.08;
+  const maxRoas = span < 0.1 ? rawMax + 0.5 : rawMax + span * 0.08;
+  const effectiveSpan = maxRoas - minRoas || 1;
+
+  const innerW = Math.max(1, width - padX * 2);
+  const innerH = Math.max(1, height - padY * 2);
+  const bottomY = Number((height - padY).toFixed(1));
+
+  const coords: SparklinePointCoord[] = points.map((pt, index) => {
+    const x =
+      points.length === 1
+        ? width / 2
+        : padX + (index / (points.length - 1)) * innerW;
+    const val = Number.isFinite(pt.roas) ? pt.roas : minRoas;
+    const norm = Math.max(0, Math.min(1, (val - minRoas) / effectiveSpan));
+    const y = padY + (1 - norm) * innerH;
+    return {
+      index,
+      x: Number(x.toFixed(1)),
+      y: Number(y.toFixed(1)),
+      point: pt,
+    };
+  });
+
+  const linePath = coords
+    .map((c, idx) => `${idx === 0 ? 'M' : 'L'} ${c.x} ${c.y}`)
+    .join(' ');
+  const firstX = coords[0].x;
+  const lastX = coords[coords.length - 1].x;
+  const areaPath = `${linePath} L ${lastX} ${bottomY} L ${firstX} ${bottomY} Z`;
+
+  const avgVal = roasVals.reduce((sum, v) => sum + v, 0) / roasVals.length;
+  const avgNorm = Math.max(0, Math.min(1, (avgVal - minRoas) / effectiveSpan));
+  const avgY = Number((padY + (1 - avgNorm) * innerH).toFixed(1));
+
+  return {
+    coords,
+    linePath,
+    areaPath,
+    minRoas: Number(rawMin.toFixed(2)),
+    maxRoas: Number(rawMax.toFixed(2)),
+    avgY,
+  };
+}
+
+export interface TrendSparklineProps {
+  series: ChannelTrendSeries;
+  color: string;
+  testId?: string;
+}
+
+export function TrendSparkline({
+  series,
+  color,
+  testId,
+}: TrendSparklineProps) {
+  const reactId = useId();
+  const safeGradId = `spark-grad-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  const width = 180;
+  const height = 38;
+  const geom = computeSparklineGeometry(series.points, width, height, 4, 4);
+
+  if (geom.coords.length === 0) {
+    return null;
+  }
+
+  const activeIdx =
+    hoverIdx !== null && hoverIdx >= 0 && hoverIdx < geom.coords.length
+      ? hoverIdx
+      : geom.coords.length - 1;
+  const activeCoord = geom.coords[activeIdx];
+  const isHovering = hoverIdx !== null;
+
+  const delta = series.deltaPct;
+  const deltaPositive = delta > 1;
+  const deltaNegative = delta < -1;
+  const deltaText = `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
+
+  const handleMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width || geom.coords.length <= 1) {
+      return;
+    }
+    const relX = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const idx = Math.round(relX * (geom.coords.length - 1));
+    setHoverIdx(idx);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
+    if (geom.coords.length <= 1) {
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      setHoverIdx((prev) =>
+        prev === null ? geom.coords.length - 1 : Math.max(0, prev - 1),
+      );
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      setHoverIdx((prev) =>
+        prev === null ? 0 : Math.min(geom.coords.length - 1, prev + 1),
+      );
+    } else if (event.key === 'Escape') {
+      setHoverIdx(null);
+    }
+  };
+
+  return (
+    <div className="trend-sparkline tabular-nums" data-testid={testId}>
+      <div className="trend-sparkline-header">
+        <span className="trend-sparkline-caption">
+          {isHovering
+            ? formatShortIsoDate(activeCoord.point.date)
+            : `${series.points.length}d ROAS trend`}
+        </span>
+        {isHovering ? (
+          <strong className="trend-sparkline-hover-val">
+            {`${activeCoord.point.roas.toFixed(2)}x`}
+          </strong>
+        ) : (
+          <span
+            className={`trend-delta-pill ${
+              deltaPositive
+                ? 'trend-delta-up'
+                : deltaNegative
+                  ? 'trend-delta-down'
+                  : 'trend-delta-flat'
+            }`}
+            title={`First 7 days ${series.firstWindowRoas.toFixed(2)}x vs last 7 days ${series.lastWindowRoas.toFixed(2)}x`}
+          >
+            <span aria-hidden="true">
+              {deltaPositive ? '↗' : deltaNegative ? '↘' : '→'}
+            </span>
+            <span>{deltaText}</span>
+          </span>
+        )}
+      </div>
+
+      <div className="trend-sparkline-canvas">
+        <svg
+          className="trend-sparkline-svg"
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          role="img"
+          tabIndex={0}
+          aria-label={`${series.channel} ${series.points.length}-day ROAS trend from ${series.firstWindowRoas.toFixed(2)}x to ${series.lastWindowRoas.toFixed(2)}x (${deltaText})`}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={() => setHoverIdx(null)}
+          onBlur={() => setHoverIdx(null)}
+          onKeyDown={handleKeyDown}
+        >
+          <defs>
+            <linearGradient id={safeGradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+              <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+          <line
+            x1="4"
+            y1={geom.avgY}
+            x2={width - 4}
+            y2={geom.avgY}
+            stroke="#CBD5E1"
+            strokeWidth="1"
+            strokeDasharray="2 2"
+            vectorEffect="non-scaling-stroke"
+          />
+          <path d={geom.areaPath} fill={`url(#${safeGradId})`} />
+          <path
+            d={geom.linePath}
+            fill="none"
+            stroke={color}
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          {isHovering ? (
+            <line
+              x1={activeCoord.x}
+              y1="2"
+              x2={activeCoord.x}
+              y2={height - 2}
+              stroke={color}
+              strokeOpacity="0.45"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : null}
+        </svg>
+        <span
+          className={`trend-sparkline-dot${isHovering ? ' trend-sparkline-dot-active' : ''}`}
+          style={{
+            left: `${((activeCoord.x / width) * 100).toFixed(2)}%`,
+            top: `${((activeCoord.y / height) * 100).toFixed(2)}%`,
+            borderColor: color,
+          }}
+          aria-hidden="true"
+        />
+      </div>
+    </div>
+  );
+}
+
+export interface AnomalyBarPoint {
+  id: string;
+  date: string;
+  channel: string;
+  totalSpend: number;
+  avgDailySpend: number;
+  spendDeltaPct: number;
+  roas: number | null;
+  color: string;
+}
+
+export function computeAnomalySeries(
+  rows: Array<Record<string, string | number | boolean | null>>,
+): { items: AnomalyBarPoint[]; maxAbsPct: number } {
+  const parsed: AnomalyBarPoint[] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const r = rows[i];
+    const date = typeof r.date === 'string' ? r.date : '';
+    const spendDeltaPct =
+      typeof r.spend_delta_pct === 'number' && Number.isFinite(r.spend_delta_pct)
+        ? r.spend_delta_pct
+        : null;
+    const totalSpend =
+      typeof r.total_spend === 'number' && Number.isFinite(r.total_spend)
+        ? r.total_spend
+        : 0;
+    const avgDailySpend =
+      typeof r.avg_daily_spend === 'number' && Number.isFinite(r.avg_daily_spend)
+        ? r.avg_daily_spend
+        : 0;
+    if (!date || spendDeltaPct === null) {
+      continue;
+    }
+    const channel = typeof r.channel === 'string' ? r.channel : 'Channel';
+    const roas =
+      typeof r.roas === 'number' && Number.isFinite(r.roas) ? r.roas : null;
+    parsed.push({
+      id: `${date}-${channel}-${i}`,
+      date,
+      channel,
+      totalSpend,
+      avgDailySpend,
+      spendDeltaPct,
+      roas,
+      color: getChannelColorVar(channel),
+    });
+  }
+
+  parsed.sort((a, b) => a.date.localeCompare(b.date) || a.channel.localeCompare(b.channel));
+  const rawMax = Math.max(...parsed.map((item) => Math.abs(item.spendDeltaPct)), 10);
+  const maxAbsPct = Math.ceil(rawMax / 5) * 5;
+  return { items: parsed, maxAbsPct };
+}
+
+export interface DailyAnomalyChartProps {
+  rows: Array<Record<string, string | number | boolean | null>>;
+  testId?: string;
+}
+
+export function DailyAnomalyChart({
+  rows,
+  testId = 'daily-anomaly-chart',
+}: DailyAnomalyChartProps) {
+  const { items, maxAbsPct } = computeAnomalySeries(rows);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  let peakIdx = 0;
+  for (let i = 1; i < items.length; i += 1) {
+    if (Math.abs(items[i].spendDeltaPct) > Math.abs(items[peakIdx].spendDeltaPct)) {
+      peakIdx = i;
+    }
+  }
+  const activeIdx =
+    selectedIdx !== null && selectedIdx >= 0 && selectedIdx < items.length
+      ? selectedIdx
+      : peakIdx;
+  const active = items[activeIdx];
+  const firstDate = formatShortIsoDate(items[0].date);
+  const midDate = formatShortIsoDate(items[Math.floor(items.length / 2)].date);
+  const lastDate = formatShortIsoDate(items[items.length - 1].date);
+
+  return (
+    <div
+      className="anomaly-chart tabular-nums"
+      role="img"
+      aria-label={`Chronological daily spend variance chart across ${items.length} anomaly days. Peak variance: ${formatShortIsoDate(active.date)} ${active.channel} ${active.spendDeltaPct > 0 ? '+' : ''}${active.spendDeltaPct.toFixed(1)}%.`}
+      data-testid={testId}
+    >
+      <div className="anomaly-chart-header">
+        <div>
+          <div className="chart-section-label">Chronological spend vs. channel average</div>
+          <div className="anomaly-readout" data-testid="anomaly-chart-readout">
+            <span
+              className={`channel-dot channel-dot-${resolveChannelTone(active.channel)}`}
+              aria-hidden="true"
+            />
+            <strong>{formatShortIsoDate(active.date)}</strong>
+            <span>{active.channel}</span>
+            <span className="anomaly-readout-sep" aria-hidden="true">·</span>
+            <span>
+              {`$${Math.round(active.totalSpend).toLocaleString('en-US')} vs $${Math.round(active.avgDailySpend).toLocaleString('en-US')} avg`}
+            </span>
+            <span
+              className={`pill ${
+                active.spendDeltaPct >= 0 ? 'pill-amber' : 'pill-blue'
+              }`}
+            >
+              {`${active.spendDeltaPct >= 0 ? '+' : ''}${active.spendDeltaPct.toFixed(1)}%`}
+            </span>
+            {active.roas !== null ? (
+              <span className="anomaly-readout-roas">{`${active.roas.toFixed(2)}x ROAS`}</span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="anomaly-plot-wrap">
+        <div className="anomaly-y-axis" aria-hidden="true">
+          <span>{`+${maxAbsPct}%`}</span>
+          <span>0%</span>
+          <span>{`-${maxAbsPct}%`}</span>
+        </div>
+
+        <div className="anomaly-plot">
+          <div className="anomaly-baseline" aria-hidden="true" />
+          <div className="anomaly-bars">
+            {items.map((item, idx) => {
+              const heightPct = Math.max(
+                6,
+                Math.min(100, (Math.abs(item.spendDeltaPct) / maxAbsPct) * 100),
+              );
+              const isPositive = item.spendDeltaPct >= 0;
+              const isSelected = idx === activeIdx;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`anomaly-bar-slot${isSelected ? ' anomaly-bar-slot-active' : ''}`}
+                  aria-label={`${formatShortIsoDate(item.date)} ${item.channel}: ${item.spendDeltaPct > 0 ? '+' : ''}${item.spendDeltaPct.toFixed(1)}% vs average`}
+                  onMouseEnter={() => setSelectedIdx(idx)}
+                  onFocus={() => setSelectedIdx(idx)}
+                  onClick={() => setSelectedIdx(idx)}
+                >
+                  <span className="anomaly-bar-half anomaly-bar-half-top">
+                    {isPositive ? (
+                      <span
+                        className="anomaly-bar anomaly-bar-pos"
+                        style={{
+                          height: `${heightPct.toFixed(1)}%`,
+                          backgroundColor: item.color,
+                        }}
+                      />
+                    ) : null}
+                  </span>
+                  <span className="anomaly-bar-half anomaly-bar-half-bottom">
+                    {!isPositive ? (
+                      <span
+                        className="anomaly-bar anomaly-bar-neg"
+                        style={{
+                          height: `${heightPct.toFixed(1)}%`,
+                          backgroundColor: item.color,
+                        }}
+                      />
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="anomaly-x-axis">
+        <span>{firstDate}</span>
+        {items.length > 2 ? <span>{midDate}</span> : null}
+        <span>{lastDate}</span>
+      </div>
     </div>
   );
 }

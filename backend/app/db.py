@@ -572,3 +572,53 @@ def fetch_campaign_daily_series(
                     }
                 )
     return grouped
+
+
+def fetch_channel_daily_trends(
+    days: int = 30,
+    *,
+    data_dir: Path | None = None,
+) -> dict[str, list[dict[str, Any]]] | None:
+    """Fetch trailing N-day spend and pipeline time series per channel from Neon Postgres.
+
+    Returns None when DATABASE_URL is unset so callers can fall back cleanly to local CSV.
+    """
+    dsn = get_database_url()
+    if dsn is None:
+        return None
+
+    clamped_days = max(1, min(365, int(days)))
+    with _connect(dsn) as conn:
+        _ensure_schema(conn, dsn)
+        _ensure_performance_seeded(conn, dsn, data_dir=data_dir)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH recent_dates AS (
+                    SELECT DISTINCT date
+                    FROM relay_daily_performance
+                    ORDER BY date DESC
+                    LIMIT %s
+                )
+                SELECT
+                    channel,
+                    date::text AS date,
+                    SUM(spend)::double precision AS spend,
+                    SUM(pipeline_value)::double precision AS pipeline_value
+                FROM relay_daily_performance
+                WHERE date IN (SELECT date FROM recent_dates)
+                GROUP BY channel, date
+                ORDER BY channel ASC, date ASC
+                """,
+                (clamped_days,),
+            )
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for channel_name, date_str, spend, pipeline_val in cur.fetchall():
+                grouped.setdefault(str(channel_name), []).append(
+                    {
+                        "date": str(date_str),
+                        "spend": float(_normalize_pg_scalar(spend)),
+                        "pipeline_value": float(_normalize_pg_scalar(pipeline_val)),
+                    }
+                )
+    return grouped

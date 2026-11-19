@@ -356,3 +356,33 @@ export interface ResolvedPlaybook {
   threshold: number;
   steps: PlaybookStepInfo[];
 }
+
+export interface ChannelTrendPoint {
+  date: string;
+  spend: number;
+  pipelineValue: number;
+  roas: number;
+}
+
+export interface ChannelTrendSeries {
+  channelId: ChannelId;
+  channel: string;
+  firstWindowRoas: number;
+  lastWindowRoas: number;
+  deltaPct: number;
+  points: ChannelTrendPoint[];
+}
+
+export interface ChannelTrendsResponse {
+  days: number;
+  mode: 'neon-postgres' | 'in-process';
+  channels: Partial<Record<ChannelId, ChannelTrendSeries>>;
+}
+
+export interface FollowUpChip {
+  id: string;
+  label: string;
+  prompt: string;
+  tierHint: 'fast' | 'reasoning';
+  tone: 'blue' | 'green' | 'amber' | 'violet';
+}
