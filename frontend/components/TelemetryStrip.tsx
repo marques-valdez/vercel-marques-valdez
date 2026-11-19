@@ -5,9 +5,10 @@ import type { TelemetryData } from '@/lib/types';
 
 interface TelemetryStripProps {
   entries: TelemetryData[];
+  onOpenFinOps?: () => void;
 }
 
-export function TelemetryStrip({ entries }: TelemetryStripProps) {
+export function TelemetryStrip({ entries, onOpenFinOps }: TelemetryStripProps) {
   if (entries.length === 0) {
     return null;
   }
@@ -73,6 +74,30 @@ export function TelemetryStrip({ entries }: TelemetryStripProps) {
         >
           {`Simulated outage · app-level retry → ${displayedModel}`}
         </span>
+      ) : null}
+
+      {onOpenFinOps ? (
+        <button
+          type="button"
+          className="telemetry-finops-btn mono-text"
+          onClick={onOpenFinOps}
+          data-testid="telemetry-finops-button"
+        >
+          FinOps math
+        </button>
+      ) : null}
+
+      {failoverMode !== 'none' && failoverEntry ? (
+        <div
+          className="telemetry-waterfall mono-text tabular-nums"
+          data-testid="telemetry-waterfall"
+        >
+          <span>{`1. ${failoverEntry.primaryModel} (HTTP 503)`}</span>
+          <span aria-hidden="true">{' -> '}</span>
+          <strong>
+            {`2. ${failoverEntry.servedModel} (200 OK · ${Math.round(failoverEntry.latencyMs).toLocaleString('en-US')} ms)`}
+          </strong>
+        </div>
       ) : null}
     </div>
   );

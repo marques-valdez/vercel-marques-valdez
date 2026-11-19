@@ -21,7 +21,7 @@
 
 ---
 
-### What the Live Relay Studio Reference App Demonstrates (`vercel-marques-valdez`)
+### What the Live Relay Studio Reference App Demonstrates
 
 - **Real Python `FastAPI` + `LangGraph` Agent (`backend/`):** Zero TypeScript agent and zero scripted fake-AI mode. Streams `x-vercel-ai-ui-message-stream: v1` SSE frames, live AI Gateway `servedModel` + token savings telemetry, and honest `gateway` vs. `simulated` failover badges. *(Hosted via Vercel Services so one URL serves both services; in production, the same adapter runs on Fieldstone's GKE cluster.)*
 - **Four End-to-End AdOps Flows (`12` Campaigns · `104` Ad Groups · `$6,167/day` · `10,400` Rows):** (1) **Creative `404` & UTM Hygiene Audit** (`14` broken URLs, `9` UTM fixes), (2) **Sandbox SQLite ROAS Analysis** (`NetworkPolicy.deny_all()` + badged `in-process` fallback), (3) **Client-Gated Budget Reallocation** (`Decimal` validation before state changes), and (4) **6-Node Workflow Dry Run + Viral `/p/[slug]` & `1200x630` `/api/og` Unfurl** (with `zod`-strict zero-PII slugs and non-auto-executing `/?remix=` prefill).

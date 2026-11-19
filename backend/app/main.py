@@ -31,10 +31,13 @@ from app.agent import build_agent_graph
 from app.pricing import get_pricing_source
 from app.router import TierName, route_turn
 from app.sandbox_runner import (
+    SandboxQueryResult,
     is_sandbox_available,
     reset_request_sandbox_budget,
     restore_request_sandbox_budget,
+    run_sandbox_query,
 )
+from app.sql_templates import TemplateInputId
 from app.twin import (
     DerivedTwinState,
     MutationList,
@@ -195,6 +198,33 @@ class HealthResponse(BaseModel):
     commitSha: str
     pricingSource: str
     sandboxAvailable: bool
+    fastModels: list[str]
+    reasoningModels: list[str]
+    baselineModel: str
+    serviceTopology: dict[str, str]
+
+
+class SandboxDirectQueryRequest(BaseModel):
+    """Inbound payload for POST /api/agent/sandbox/query."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    templateId: TemplateInputId = "channel_roas_summary"
+    channel: str | None = None
+    zeroConversionsOnly: bool = False
+    limit: int = Field(default=20, ge=1, le=50)
+    sortOrder: Literal["asc", "desc"] = "desc"
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _reject_invalid_scalars(
+        cls,
+        value: Any,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        _raise_if_non_finite_float(value, cls.__name__)
+        _raise_if_lone_surrogate(value, cls.__name__)
+        return handler(value)
 
 
 class WorkflowRunRequest(BaseModel):
@@ -292,6 +322,8 @@ async def handle_pydantic_validation_error(
 
 @app.get("/api/agent/health", response_model=HealthResponse)
 async def health_endpoint() -> HealthResponse:
+    fast_route = route_turn("", tier_hint="fast")
+    reasoning_route = route_turn("", tier_hint="reasoning")
     return HealthResponse(
         status="ok",
         pythonVersion=platform.python_version(),
@@ -300,7 +332,39 @@ async def health_endpoint() -> HealthResponse:
         commitSha=os.getenv("VERCEL_GIT_COMMIT_SHA") or "local",
         pricingSource=get_pricing_source(),
         sandboxAvailable=is_sandbox_available(),
+        fastModels=[fast_route.primary_model, *fast_route.fallback_models],
+        reasoningModels=[reasoning_route.primary_model, *reasoning_route.fallback_models],
+        baselineModel=reasoning_route.baseline_model,
+        serviceTopology={
+            "frontend": "Next.js App Router",
+            "rewrite": "/api/agent/*",
+            "backend": "Python FastAPI + LangGraph",
+        },
     )
+
+
+@app.post("/api/agent/sandbox/query", response_model=SandboxQueryResult)
+async def sandbox_query_endpoint(
+    payload: SandboxDirectQueryRequest = Body(default_factory=SandboxDirectQueryRequest),
+) -> SandboxQueryResult | JSONResponse:
+    budget_token = reset_request_sandbox_budget()
+    try:
+        return await run_sandbox_query(
+            payload.templateId,
+            {
+                "channel": payload.channel,
+                "zero_conversions_only": payload.zeroConversionsOnly,
+                "limit": payload.limit,
+                "sort_order": payload.sortOrder,
+            },
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"msg": str(exc)}]},
+        )
+    finally:
+        restore_request_sandbox_budget(budget_token)
 
 
 @app.post("/api/agent/twin/state", response_model=DerivedTwinState)

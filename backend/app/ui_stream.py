@@ -128,6 +128,11 @@ async def stream_langgraph_to_sse(
                         }
                     )
 
+                elif kind == "sandbox_status":
+                    yield format_sse(
+                        {"type": "data-sandbox-status", "data": event["data"]}
+                    )
+
                 elif kind == "tool_output":
                     yield format_sse(
                         {

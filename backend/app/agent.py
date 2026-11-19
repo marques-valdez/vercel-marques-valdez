@@ -438,6 +438,27 @@ def build_agent_graph(
                 continue
 
             try:
+                if tool_name == "analyze_in_sandbox":
+                    writer(
+                        {
+                            "kind": "sandbox_status",
+                            "data": {
+                                "toolCallId": call_id,
+                                "stage": "provisioning",
+                                "label": "Provisioning ephemeral microVM",
+                            },
+                        }
+                    )
+                    writer(
+                        {
+                            "kind": "sandbox_status",
+                            "data": {
+                                "toolCallId": call_id,
+                                "stage": "executing_sql",
+                                "label": "Running parameterized sqlite3 over CSV snapshot",
+                            },
+                        }
+                    )
                 result = await target_tool.ainvoke(dict(tool_args))
                 writer(
                     {
@@ -446,6 +467,17 @@ def build_agent_graph(
                         "output": result,
                     }
                 )
+                if tool_name == "analyze_in_sandbox":
+                    writer(
+                        {
+                            "kind": "sandbox_status",
+                            "data": {
+                                "toolCallId": call_id,
+                                "stage": "completed",
+                                "label": "MicroVM complete · compact JSON returned",
+                            },
+                        }
+                    )
                 tool_messages.append(
                     ToolMessage(
                         content=json.dumps(result, separators=(",", ":"), allow_nan=False),

@@ -753,7 +753,7 @@ test('MarkdownText renders headings, lists, inline formatting, and blocks unsafe
   const ReactDOMServer = requireFromFrontend('react-dom/server');
   const { MarkdownText } = loadTsModule('components/MarkdownText.tsx');
   const sample = [
-    '#### Google Ads (5 campaigns)',
+    '#### Google Ads (active overview)',
     '- **Broken 404s:** 4 creatives across *cmp_google_02* (`utm_source=google`)',
     '',
     '### Immediate Recommendations',
@@ -763,7 +763,7 @@ test('MarkdownText renders headings, lists, inline formatting, and blocks unsafe
   const html = ReactDOMServer.renderToStaticMarkup(
     React.createElement(MarkdownText, { text: sample }),
   );
-  assert.equal(html.includes('<h4 class="md-h4">Google Ads (5 campaigns)</h4>'), true);
+  assert.equal(html.includes('<h4 class="md-h4">Google Ads (active overview)</h4>'), true);
   assert.equal(html.includes('<h3 class="md-h3">Immediate Recommendations</h3>'), true);
   assert.equal(html.includes('<strong>Broken 404s:</strong>'), true);
   assert.equal(html.includes('<em>cmp_google_02</em>'), true);
@@ -772,4 +772,113 @@ test('MarkdownText renders headings, lists, inline formatting, and blocks unsafe
   assert.equal(html.includes('<ol class="md-list md-list-ordered">'), true);
   assert.equal(html.includes('href="/p/creative-404-guard"'), true);
   assert.equal(html.includes('javascript:'), false);
+});
+
+
+test('V2 Vercel showcase modules: gateway-preview, ProtocolXRay, VercelArchitectureStrip, and SandboxCard context meter', () => {
+  const React = requireFromFrontend('react');
+  const ReactDOMServer = requireFromFrontend('react-dom/server');
+  const { previewGatewayRoute, computeEnterpriseCounterfactual } = loadTsModule(
+    'lib/gateway-preview.ts',
+  );
+  const { ProtocolXRay } = loadTsModule('components/ProtocolXRay.tsx');
+  const { VercelArchitectureStrip } = loadTsModule(
+    'components/VercelArchitectureStrip.tsx',
+  );
+  const { SandboxCard } = loadTsModule('components/SandboxCard.tsx');
+
+  const fastRoute = previewGatewayRoute('Check broken creative URLs', null, null);
+  assert.equal(fastRoute.tier, 'fast');
+  assert.equal(fastRoute.routedBy, 'keyword');
+
+  const reasoningRoute = previewGatewayRoute(
+    'Reallocate wasted budget to top search campaigns',
+    null,
+    null,
+  );
+  assert.equal(reasoningRoute.tier, 'reasoning');
+  assert.equal(reasoningRoute.matchedKeyword, 'realloc');
+
+  const cf = computeEnterpriseCounterfactual(
+    [
+      {
+        tier: 'fast',
+        routedBy: 'card',
+        primaryModel: 'nvidia/nemotron-3.5-lightning-free',
+        servedModel: 'nvidia/nemotron-3.5-lightning-free',
+        failover: 'none',
+        inputTokens: 1200,
+        cachedTokens: 200,
+        outputTokens: 300,
+        costUsd: 0,
+        baselineCostUsd: 0,
+        latencyMs: 420,
+      },
+    ],
+    120000,
+  );
+  assert.equal(cf.actualUsd, 0);
+  assert.ok(cf.naiveReasoningPlusCsvUsd > cf.enterpriseTwoTierUsd);
+  assert.ok(cf.savingsPct > 90);
+
+  const archHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(VercelArchitectureStrip, {
+      health: {
+        status: 'ok',
+        pythonVersion: '3.12.4',
+        vercelEnv: 'development',
+        deploymentId: 'local',
+        commitSha: 'local',
+        pricingSource: 'live',
+        sandboxAvailable: false,
+      },
+      healthPingMs: 14,
+      injectFailure: false,
+      isStreaming: false,
+      onToggleInjectFailure: () => {},
+      onRunDemoStep: () => {},
+      onOpenInspector: () => {},
+    }),
+  );
+  assert.equal(archHtml.includes('Next.js App Router'), true);
+  assert.equal(archHtml.includes('Primary 503 drill: Off'), true);
+  assert.equal(archHtml.includes('Gateway failover'), false);
+  assert.equal(archHtml.includes('Simulated outage'), false);
+
+  const xrayHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ProtocolXRay, {
+      frames: [
+        {
+          id: '0-1',
+          offsetMs: 12,
+          type: 'start',
+          raw: '{"type":"start","messageId":"msg_1"}',
+          payload: { type: 'start', messageId: 'msg_1' },
+        },
+      ],
+      uiStreamSource: 'yield format_sse({"type": "start", "messageId": msg_id})',
+      defaultOpen: true,
+    }),
+  );
+  assert.equal(xrayHtml.includes('x-vercel-ai-ui-message-stream: v1'), true);
+  assert.equal(xrayHtml.includes('backend/app/ui_stream.py'), true);
+
+  const sandboxHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(SandboxCard, {
+      state: 'completed',
+      output: {
+        templateId: 'channel_roas_summary',
+        mode: 'in-process',
+        sandboxMs: 28,
+        rowsScanned: 1000,
+        rowsReturned: 3,
+        sql: 'SELECT channel, SUM(spend) FROM perf GROUP BY channel',
+        table: [{ channel: 'Google Ads', roas: 4.1 }],
+        estTokensAvoided: 95000,
+      },
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(sandboxHtml.includes('sandbox-preset-bar'), true);
+  assert.equal(sandboxHtml.includes('sandbox-context-meter'), true);
 });

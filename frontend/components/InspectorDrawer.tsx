@@ -1,12 +1,15 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { computeEnterpriseCounterfactual } from '@/lib/gateway-preview';
 import type { HealthStatus, RelayUIMessage, TelemetryData } from '@/lib/types';
 
 interface InspectorDrawerProps {
   isOpen: boolean;
+  initialTab?: 'all' | 'adapter' | 'deployment';
   injectFailure: boolean;
   telemetryEntries: TelemetryData[];
+  totalTokensAvoided?: number;
   messages: RelayUIMessage[];
   uiStreamSource: string;
   health: HealthStatus | null;
@@ -239,8 +242,10 @@ export function computeToolLedger(messages: RelayUIMessage[]): ToolLedgerRow[] {
 
 export function InspectorDrawer({
   isOpen,
+  initialTab = 'all',
   injectFailure,
   telemetryEntries,
+  totalTokensAvoided = 0,
   messages,
   uiStreamSource,
   health,
@@ -250,9 +255,15 @@ export function InspectorDrawer({
   onRefreshHealth,
   onResetDemo,
 }: InspectorDrawerProps) {
-  const [activeTab, setActiveTab] = useState<InspectorTab>('all');
+  const [activeTab, setActiveTab] = useState<InspectorTab>(initialTab);
   const [copiedSource, setCopiedSource] = useState(false);
   const [resetting, setResetting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -505,6 +516,41 @@ export function InspectorDrawer({
                     <span>Baseline (vs. every turn on the reasoning model)</span>
                     <strong>${totalBaselineCostUsd.toFixed(4)}</strong>
                   </div>
+                  {(() => {
+                    const cf = computeEnterpriseCounterfactual(
+                      telemetryEntries,
+                      totalTokensAvoided,
+                    );
+                    if (cf.totalTokensProcessed === 0 && cf.totalTokensAvoided === 0) {
+                      return null;
+                    }
+                    return (
+                      <div
+                        className="finops-counterfactual"
+                        data-testid="inspector-finops-counterfactual"
+                      >
+                        <div className="ledger-subtable-heading">
+                          Enterprise paid-tier counterfactual (two-tier + Sandbox)
+                        </div>
+                        <div className="ledger-baseline-row">
+                          <span>Two-tier + Sandbox reference cost</span>
+                          <strong>${cf.enterpriseTwoTierUsd.toFixed(4)}</strong>
+                        </div>
+                        <div className="ledger-baseline-row">
+                          <span>
+                            {`Naive 100% reasoning + ${cf.totalTokensAvoided.toLocaleString('en-US')} raw CSV tokens`}
+                          </span>
+                          <strong>${cf.naiveReasoningPlusCsvUsd.toFixed(4)}</strong>
+                        </div>
+                        <div className="ledger-baseline-row">
+                          <span>Estimated architecture savings</span>
+                          <strong className="status-text-ok">
+                            {`${cf.savingsPct.toFixed(1)}% saved`}
+                          </strong>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="ledger-subtable-heading">By tool</div>

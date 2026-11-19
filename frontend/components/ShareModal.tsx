@@ -20,6 +20,7 @@ export function ShareModal({ isOpen, initialSlug, onClose }: ShareModalProps) {
   const [threshold, setThreshold] = useState<number>(initialResolved.threshold);
   const [copied, setCopied] = useState(false);
   const [origin, setOrigin] = useState('');
+  const [ogRendering, setOgRendering] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -71,6 +72,17 @@ export function ShareModal({ isOpen, initialSlug, onClose }: ShareModalProps) {
   const sharePath = `/p/${activeSlug}`;
   const fullShareUrl = origin ? `${origin}${sharePath}` : sharePath;
   const ogImageUrl = `/api/og?slug=${encodeURIComponent(activeSlug)}`;
+  const activePlaybookMeta =
+    PLAYBOOKS.find((item) => item.id === template) ?? PLAYBOOKS[0];
+  const codecPayloadJson = JSON.stringify(
+    {
+      template,
+      channels: safeChannels,
+      threshold: clampedThreshold,
+    },
+    null,
+    2,
+  );
 
   const handleChannelToggle = (channelId: ChannelId) => {
     setCopied(false);
@@ -175,19 +187,37 @@ export function ShareModal({ isOpen, initialSlug, onClose }: ShareModalProps) {
             <label htmlFor="share-threshold-input" className="field-label">
               Threshold (%)
             </label>
-            <input
-              id="share-threshold-input"
-              type="number"
-              min={1}
-              max={100}
-              className="field-input tabular-nums"
-              value={clampedThreshold}
-              onChange={(e) => {
-                const parsed = Number.parseInt(e.target.value, 10);
-                setThreshold(Number.isFinite(parsed) ? parsed : 10);
-                setCopied(false);
-              }}
-            />
+            <div className="threshold-input-pair">
+              <input
+                type="range"
+                min={1}
+                max={100}
+                aria-label="Threshold slider"
+                className="field-range"
+                value={clampedThreshold}
+                onChange={(e) => {
+                  const parsed = Number.parseInt(e.target.value, 10);
+                  setThreshold(Number.isFinite(parsed) ? parsed : 10);
+                  setOgRendering(true);
+                  setCopied(false);
+                }}
+                data-testid="share-threshold-slider"
+              />
+              <input
+                id="share-threshold-input"
+                type="number"
+                min={1}
+                max={100}
+                className="field-input threshold-number-input tabular-nums"
+                value={clampedThreshold}
+                onChange={(e) => {
+                  const parsed = Number.parseInt(e.target.value, 10);
+                  setThreshold(Number.isFinite(parsed) ? parsed : 10);
+                  setOgRendering(true);
+                  setCopied(false);
+                }}
+              />
+            </div>
           </div>
         </div>
 
@@ -233,17 +263,53 @@ export function ShareModal({ isOpen, initialSlug, onClose }: ShareModalProps) {
         </div>
 
         <div className="og-preview-frame">
-          <div className="field-label">Live Open Graph social card (/api/og)</div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={ogImageUrl}
-            width={1200}
-            height={630}
-            alt="Playbook Open Graph card preview"
-            className="og-preview-img"
-            data-testid="share-og-preview"
-          />
+          <div className="og-preview-header">
+            <div className="field-label">Live Open Graph social card (/api/og)</div>
+            <span className="pill mono-text tabular-nums">
+              {ogRendering ? 'Rendering 1200×630 PNG…' : '1200×630 PNG · next/og'}
+            </span>
+          </div>
+          <div className="og-unfurl-card">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={ogImageUrl}
+              width={1200}
+              height={630}
+              alt="Playbook Open Graph card preview"
+              className="og-preview-img"
+              data-testid="share-og-preview"
+              onLoad={() => setOgRendering(false)}
+              onError={() => setOgRendering(false)}
+            />
+            <div className="og-unfurl-meta">
+              <div className="og-unfurl-domain mono-text">
+                {origin ? origin.replace(/^https?:\/\//, '') : 'relay-studio.vercel.app'}
+              </div>
+              <div className="og-unfurl-title">
+                {`${activePlaybookMeta.title} · Fieldstone / Relay Studio`}
+              </div>
+              <div className="og-unfurl-desc">{activePlaybookMeta.summary}</div>
+            </div>
+          </div>
         </div>
+
+        <details className="technical-drawer" data-testid="share-codec-drawer">
+          <summary>{`Zero-DB Slug Codec · ${activeSlug.length} bytes · 0 database rows`}</summary>
+          <div className="codec-grid">
+            <div>
+              <div className="field-label">Validated Zod payload</div>
+              <pre className="code-block mono-text">
+                <code>{codecPayloadJson}</code>
+              </pre>
+            </div>
+            <div>
+              <div className="field-label">Stateless base64url slug</div>
+              <pre className="code-block mono-text">
+                <code>{activeSlug}</code>
+              </pre>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   );

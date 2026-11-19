@@ -1,11 +1,12 @@
 'use client';
 
 import React from 'react';
-import type { DerivedTwinState } from '@/lib/types';
+import type { ChannelDelta, DerivedTwinState } from '@/lib/types';
 
 interface ChannelHealthStripProps {
   twinState: DerivedTwinState | null;
   errorText: string | null;
+  deltas?: Record<string, ChannelDelta>;
   onRetry: () => void;
   onReset: () => void;
 }
@@ -21,6 +22,7 @@ function formatBudgetAmount(value: number): string {
 export function ChannelHealthStrip({
   twinState,
   errorText,
+  deltas,
   onRetry,
   onReset,
 }: ChannelHealthStripProps) {
@@ -78,10 +80,18 @@ export function ChannelHealthStrip({
     >
       {channels.map((ch) => {
         const hasIssues = ch.brokenCreatives > 0 || ch.utmViolations > 0;
+        const delta = deltas?.[ch.channelId];
+        const hasBudgetDelta = Boolean(
+          delta && Math.abs(delta.dailyBudgetDelta) >= 0.01,
+        );
+        const hasHygieneDelta = Boolean(
+          delta &&
+            (delta.brokenCreativesDelta !== 0 || delta.utmViolationsDelta !== 0),
+        );
         return (
           <article
             key={ch.channelId}
-            className="health-item"
+            className={`health-item${hasBudgetDelta || hasHygieneDelta ? ' health-item-changed' : ''}`}
             data-channel-id={ch.channelId}
           >
             <div className="health-item-header">
@@ -101,6 +111,34 @@ export function ChannelHealthStrip({
                 {`${ch.utmViolations.toLocaleString('en-US')} UTM issues`}
               </span>
             </div>
+            {hasBudgetDelta || hasHygieneDelta ? (
+              <div
+                className="health-delta-row tabular-nums mono-text"
+                data-testid={`channel-delta-${ch.channelId}`}
+              >
+                {hasBudgetDelta && delta ? (
+                  <span
+                    className={
+                      delta.dailyBudgetDelta > 0
+                        ? 'delta-pill delta-pill-positive'
+                        : 'delta-pill delta-pill-negative'
+                    }
+                  >
+                    {`${delta.dailyBudgetDelta > 0 ? '+' : '-'}$${formatBudgetAmount(Math.abs(delta.dailyBudgetDelta))}/day`}
+                  </span>
+                ) : null}
+                {delta && delta.brokenCreativesDelta < 0 ? (
+                  <span className="delta-pill delta-pill-positive">
+                    URLs remediated
+                  </span>
+                ) : null}
+                {delta && delta.utmViolationsDelta < 0 ? (
+                  <span className="delta-pill delta-pill-positive">
+                    UTMs normalized
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </article>
         );
       })}

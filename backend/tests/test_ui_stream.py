@@ -751,25 +751,35 @@ def test_golden_sse_single_tool_turn_with_pre_text_and_all_four_tools(
     assert resp.status_code == 200
     frames, saw_done = _parse_sse_body(resp.text)
     assert saw_done is True
-    assert [f["type"] for f in frames] == [
+    expected_types = [
         "start",
         "start-step",
         "text-start",
         "text-delta",
         "text-end",
         "tool-input-available",
-        "tool-output-available",
-        "data-telemetry",
-        "finish-step",
-        "start-step",
-        "text-start",
-        "text-delta",
-        "text-end",
-        "data-telemetry",
-        "finish-step",
-        "finish",
     ]
-    out = frames[6]["output"]
+    if tool_name == "analyze_in_sandbox":
+        expected_types.extend(["data-sandbox-status", "data-sandbox-status"])
+    expected_types.append("tool-output-available")
+    if tool_name == "analyze_in_sandbox":
+        expected_types.append("data-sandbox-status")
+    expected_types.extend(
+        [
+            "data-telemetry",
+            "finish-step",
+            "start-step",
+            "text-start",
+            "text-delta",
+            "text-end",
+            "data-telemetry",
+            "finish-step",
+            "finish",
+        ]
+    )
+    assert [f["type"] for f in frames] == expected_types
+    tool_out_frame = next(f for f in frames if f["type"] == "tool-output-available")
+    out = tool_out_frame["output"]
     if tool_name == "audit_campaign_hygiene":
         assert out["brokenCount"] == 6
         assert out["utmCount"] == 3
@@ -1503,3 +1513,62 @@ async def test_tools_reject_boolean_values_for_numeric_parameters(
     )
 
 
+
+
+def test_health_exposes_model_chains_and_service_topology() -> None:
+    client = TestClient(app)
+    resp = client.get("/api/agent/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert isinstance(body["fastModels"], list) and len(body["fastModels"]) >= 1
+    assert isinstance(body["reasoningModels"], list) and len(body["reasoningModels"]) >= 1
+    assert isinstance(body["baselineModel"], str) and body["baselineModel"]
+    assert body["serviceTopology"]["rewrite"] == "/api/agent/*"
+
+
+def test_direct_sandbox_query_endpoint_runs_all_templates_and_validates_inputs() -> None:
+    client = TestClient(app)
+    for template_id in (
+        "channel_roas_summary",
+        "campaign_roas_ranking",
+        "daily_pacing_anomalies",
+        "ad_group_efficiency",
+    ):
+        resp = client.post(
+            "/api/agent/sandbox/query",
+            json={"templateId": template_id, "limit": 8},
+        )
+        assert resp.status_code == 200, f"Failed for {template_id}: {resp.text}"
+        data = resp.json()
+        assert data["templateId"] == template_id
+        assert data["rowsScanned"] == 10400
+        assert data["estTokensAvoided"] > 50_000
+        assert isinstance(data["table"], list)
+
+    filtered = client.post(
+        "/api/agent/sandbox/query",
+        json={
+            "templateId": "ad_group_efficiency",
+            "channel": "LinkedIn Ads",
+            "zeroConversionsOnly": True,
+            "limit": 10,
+        },
+    )
+    assert filtered.status_code == 200
+    assert all(row["channel"] == "LinkedIn Ads" for row in filtered.json()["table"])
+
+    bad_channel = client.post(
+        "/api/agent/sandbox/query",
+        json={"templateId": "channel_roas_summary", "channel": "TikTok Ads"},
+    )
+    assert bad_channel.status_code == 422
+
+    bad_extra = client.post(
+        "/api/agent/sandbox/query",
+        json={"templateId": "channel_roas_summary", "unexpected": True},
+    )
+    assert bad_extra.status_code == 422
+
+    wrong_method = client.get("/api/agent/sandbox/query")
+    assert wrong_method.status_code == 405

@@ -97,6 +97,34 @@ export interface HealthStatus {
   commitSha: string;
   pricingSource: string;
   sandboxAvailable: boolean;
+  fastModels?: string[];
+  reasoningModels?: string[];
+  baselineModel?: string;
+  serviceTopology?: {
+    frontend: string;
+    rewrite: string;
+    backend: string;
+  };
+}
+
+export interface SandboxStatusData {
+  toolCallId: string;
+  stage: 'provisioning' | 'executing_sql' | 'completed';
+  label: string;
+}
+
+export interface WireFrameRecord {
+  id: string;
+  offsetMs: number;
+  type: string;
+  raw: string;
+  payload: Record<string, unknown> | null;
+}
+
+export interface ChannelDelta {
+  dailyBudgetDelta: number;
+  brokenCreativesDelta: number;
+  utmViolationsDelta: number;
 }
 
 export interface HygieneToolOutput {
@@ -187,6 +215,7 @@ export interface TelemetryData {
 
 export type RelayDataParts = {
   telemetry: TelemetryData;
+  'sandbox-status': SandboxStatusData;
 };
 
 export type RelayUITools = {
