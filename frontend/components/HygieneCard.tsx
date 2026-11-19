@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Typed tool card for `audit_campaign_hygiene`.
+ *
+ * Displays flagged 404 landing pages and UTM tracking gaps grouped by channel
+ * and offers a 1-click remediation action that appends deterministic fixes to
+ * the visitor's Digital Twin mutation log without requiring an extra LLM turn.
+ */
+
 import React, { useState } from 'react';
 import type { DerivedTwinState, HygieneIssue, HygieneToolOutput } from '@/lib/types';
 

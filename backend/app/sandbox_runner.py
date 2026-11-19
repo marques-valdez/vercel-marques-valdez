@@ -1,4 +1,23 @@
-"""Vercel Sandbox SQLite runner with deterministic in-process stdlib fallback."""
+"""Vercel Sandbox SQLite runner with deterministic in-process stdlib fallback.
+
+Architecture role:
+    Offloads heavy row-level aggregations (10,400 daily performance rows) out of
+    application pod RAM and out of the LLM context window by running a small
+    stdlib Python + SQLite script inside an isolated Firecracker microVM. Only
+    the compact aggregated JSON table (3-20 rows) returns to the model, avoiding
+    ~140K+ prompt tokens per turn.
+
+Security & cost invariants:
+    - `network_policy=NetworkPolicy.deny_all()`: blocks all outbound network
+      access (also means zero `pip install` inside the microVM, so `job.py`
+      uses Python stdlib `csv` + `sqlite3` only).
+    - `persistent=False`: opts out of automatic filesystem snapshots on stop so
+      one-off analytics runs never accrue snapshot storage charges.
+    - `MAX_SANDBOXES_PER_REQUEST = 1` (tracked via `ContextVar`) plus a 30s
+      timeout caps runaway microVM spend; if OIDC credentials are unavailable
+      locally, execution falls back transparently to in-process SQLite and
+      badges `mode="in-process"` honestly in telemetry.
+"""
 
 from __future__ import annotations
 
@@ -257,6 +276,8 @@ async def run_sandbox_query(
     parsed: Mapping[str, Any] | None = None
     mode: SandboxMode = "in-process"
 
+    # Enforce a hard cap of 1 microVM per HTTP request via ContextVar so a
+    # multi-step LLM loop cannot spawn runaway Sandboxes in a single turn.
     can_launch_sandbox = False
     if not prefer_in_process and not is_sandbox_disabled():
         budget = _request_sandbox_budget.get()

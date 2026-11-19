@@ -1,3 +1,11 @@
+/**
+ * Client-side AI Gateway route preview & Enterprise FinOps counterfactual math.
+ *
+ * Mirrors `backend/app/router.py`'s `REASONING_KEYWORD_RE` so the opt-in
+ * Architect X-Ray composer shows which tier and fallback chain will handle the
+ * prompt before sending. `computeEnterpriseCounterfactual()` models paid
+ * Frontier + Sandbox savings even when Hobby deployments run free-tier models.
+ */
 import type { HealthStatus, TelemetryData } from './types';
 
 export const REASONING_KEYWORD_RE =

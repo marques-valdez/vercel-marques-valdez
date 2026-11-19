@@ -1,4 +1,18 @@
-"""Four structured LangGraph tools bound per request to the visitor's mutation log."""
+"""Four structured LangGraph tools bound per request to the visitor's mutation log.
+
+Why tools are built per request instead of at module import:
+    Because the backend is stateless (zero database), each visitor's browser
+    sends its own `localStorage` mutation log on every turn. Binding tools
+    inside `build_agent_tools(mutations)` closes over that request's derived
+    Digital Twin snapshot so concurrent visitors never share or leak state.
+
+Safety boundary:
+    - `propose_budget_reallocation` is strictly read-only: it computes exact
+      before/after diffs and returns a proposal card; budgets change only after
+      the user explicitly clicks Approve in the UI.
+    - All numeric inputs reject Python `bool` (`isinstance(True, int)`) so
+      malformed LLM tool arguments fail validation cleanly.
+"""
 
 from __future__ import annotations
 

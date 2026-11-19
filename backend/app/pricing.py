@@ -1,4 +1,12 @@
-"""AI Gateway live model pricing loader with pinned 2026-11-17 fallback table."""
+"""AI Gateway live model pricing loader with pinned 2026-11-17 fallback table.
+
+Why both live and pinned pricing exist:
+    AI Gateway exposes live per-token pricing at `https://ai-gateway.vercel.sh/v1/models`.
+    We fetch and cache that catalog at runtime (`pricingSource="live"`) so cost
+    and savings telemetry stay current, while retaining a pinned fallback table
+    (`PINNED_PRICES_2026_11_17`) so local/offline runs and unit tests remain
+    deterministic without failing if the catalog endpoint is unreachable.
+"""
 
 from __future__ import annotations
 

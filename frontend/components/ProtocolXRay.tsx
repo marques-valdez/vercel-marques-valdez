@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Opt-in Architect X-Ray wire frame inspector (`x-vercel-ai-ui-message-stream: v1`).
+ *
+ * Consumes frames tapped via `response.body.tee()` in `WorkspaceClient` and
+ * pairs each live SSE frame (`start`, `tool-input-available`, `data-telemetry`,
+ * `finish`) with the exact lines of `backend/app/ui_stream.py` that emitted it.
+ */
+
 import React, { useMemo, useState } from 'react';
 import type { WireFrameRecord } from '@/lib/types';
 

@@ -1,3 +1,12 @@
+/**
+ * Client-side persistence (`localStorage["relay.workflows.v1"]`) and 4-stage
+ * DAG normalizer for compiled workflows.
+ *
+ * Maps any workflow's 6 steps onto a canonical 4-stage fan-out/fan-in topology
+ * (Snapshot -> 3 parallel checks -> Alert rule -> Morning brief), converts
+ * cron expressions into marketer-readable schedules, and auto-upgrades legacy
+ * saved workflow names so older browser storage never breaks the UI.
+ */
 import { CANONICAL_CHANNELS, PLAYBOOKS, WORKFLOW_NODE_NAMES } from './playbooks';
 import { encodePlaybookSlug, PlaybookTemplateSchema, resolvePlaybookSlug } from './share';
 import type {

@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Opt-in Architect X-Ray topology bar (`?xray=1` or `X-Ray` header toggle).
+ *
+ * Visualizes the live Vercel Services path (`Next.js App Router -> /api/agent/*
+ * -> Python FastAPI + LangGraph`), Sandbox/pricing mode, 1-click `Primary 503
+ * drill` failover trigger, and a 4-step interactive demo tour. Hidden by
+ * default so Marketing Managers see a distraction-free workspace.
+ */
+
 import React, { useState } from 'react';
 import type { HealthStatus, PlaybookId } from '@/lib/types';
 

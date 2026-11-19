@@ -1,3 +1,11 @@
+/**
+ * Browser-side chat history persistence (`localStorage`).
+ *
+ * Keeps the active conversation and rendered tool cards intact across page
+ * reloads (alongside mutations and saved workflows) without requiring a
+ * database. Bounds history to the last 30 messages starting on a user turn to
+ * match `backend/app/ui_messages.py`'s `MAX_MESSAGES` limit.
+ */
 import type { RelayUIMessage } from './types';
 
 export const CHAT_STORAGE_KEY = 'relay.chat.messages.v1';

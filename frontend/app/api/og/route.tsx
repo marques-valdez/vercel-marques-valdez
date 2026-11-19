@@ -1,3 +1,11 @@
+/**
+ * Dynamic Open Graph image generator (`/api/og?slug=...`) powered by `next/og`.
+ *
+ * Renders a 1200x630 PNG social unfurl card directly from a Zod-validated
+ * playbook slug with zero database reads. Rejects duplicate `slug` query
+ * parameters or invalid/tampered payloads with HTTP 404 to prevent arbitrary
+ * text injection onto generated brand cards.
+ */
 import React from 'react';
 import { ImageResponse } from 'next/og';
 import type { NextRequest } from 'next/server';

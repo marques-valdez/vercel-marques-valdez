@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Playbook share studio modal backed by stateless `base64url` slugs and `next/og`.
+ *
+ * Encodes template, channel selection, and alert threshold (1%-100%) into a
+ * zero-DB `/p/[slug]` URL and previews the live 1200x630 `/api/og` social card
+ * before copying.
+ */
+
 import React, { useEffect, useState } from 'react';
 import { CANONICAL_CHANNELS, CHANNEL_LABELS, PLAYBOOKS } from '@/lib/playbooks';
 import { encodePlaybookSlug, resolvePlaybookSlug } from '@/lib/share';

@@ -1,3 +1,12 @@
+/**
+ * Stateless shared playbook page (`/p/[slug]`).
+ *
+ * Zero-DB architecture: custom playbook configurations are decoded and
+ * Zod-validated directly from the `base64url` URL slug (zero database lookups,
+ * zero PII in URLs). Clicking "Remix" routes to `/?remix=<slug>`, which
+ * pre-fills the composer without auto-executing so recipients review prompts
+ * before spending model tokens.
+ */
 import React from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';

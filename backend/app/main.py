@@ -1,4 +1,19 @@
-"""FastAPI backend service for Relay Studio (/api/agent/* routes and §8 guardrails)."""
+"""FastAPI backend service for Relay Studio (/api/agent/* routes and §8 guardrails).
+
+Architecture role:
+    Mounted as the `backend` service in `vercel.json` (Vercel Services) behind
+    `/api/agent/*` so the Next.js frontend and Python LangGraph runtime ship
+    under one origin with zero CORS or auth proxy hops. In production, the exact
+    same FastAPI routes can run on Fieldstone's existing GKE cluster unchanged.
+
+Key invariants enforced at the HTTP boundary:
+    - Stateless per-request execution: the browser sends its `localStorage`
+      mutation log on every request; Python validates and replays it cleanly.
+    - Bounded per-IP sliding-window rate limiting (`20 req / 60s / IP`) with
+      LRU eviction (`4096` IPs) to prevent unbounded memory growth.
+    - Strict input sanitization: rejects NaN/Inf floats and lone UTF-16
+      surrogates before they can break JSON serialization or downstream LLMs.
+"""
 
 from __future__ import annotations
 

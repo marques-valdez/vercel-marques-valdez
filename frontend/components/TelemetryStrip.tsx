@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Opt-in Architect X-Ray per-turn AI Gateway telemetry bar.
+ *
+ * Aggregates `data-telemetry` SSE frames emitted by `backend/app/agent.py`,
+ * showing active tier, `servedModel`, token counts, latency, and a 2-hop
+ * failover waterfall whenever AI Gateway or the synthetic 503 drill reroutes
+ * to a fallback model.
+ */
+
 import React from 'react';
 import type { TelemetryData } from '@/lib/types';
 

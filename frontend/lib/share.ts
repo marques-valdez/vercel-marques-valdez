@@ -1,3 +1,12 @@
+/**
+ * Zero-DB playbook slug codec and strict Zod validator.
+ *
+ * Canonical playbooks use human-readable IDs (e.g. `creative-404-guard`);
+ * customized share links serialize `{ template, channels, threshold }` as
+ * sorted-key UTF-8 JSON encoded in `base64url`. `.strict()` + prototype-key
+ * rejection guarantees tampered slugs or arbitrary text never reach `/api/og`
+ * or `/?remix=`.
+ */
 import { z } from 'zod';
 import { CANONICAL_CHANNELS, PLAYBOOKS_BY_ID } from './playbooks';
 import type { ChannelId, PlaybookId, ResolvedPlaybook } from './types';

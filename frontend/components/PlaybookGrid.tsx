@@ -1,5 +1,12 @@
 'use client';
 
+/**
+ * 2x2 starter playbook grid solving cold-start blank-screen drop-off.
+ *
+ * Highlights the active card when arriving from a shared `/?remix=<slug>` link
+ * and collapses into a 1-line switcher once the conversation begins.
+ */
+
 import React from 'react';
 import { PLAYBOOKS } from '@/lib/playbooks';
 import type { PlaybookDefinition, PlaybookId } from '@/lib/types';

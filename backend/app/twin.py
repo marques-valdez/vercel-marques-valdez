@@ -1,4 +1,18 @@
-"""Deterministic Digital Twin loader, Pydantic v2 mutation validator, and state engine."""
+"""Deterministic Digital Twin loader, Pydantic v2 mutation validator, and state engine.
+
+Why a deterministic replay engine instead of a paid database:
+    Relay Studio stays zero-datastore on Vercel Hobby by keeping the canonical
+    seed dataset (`backend/data/twin.json` + `rows.csv`) read-only on disk and
+    replaying up to `MAX_MUTATIONS = 50` browser-stored mutations on every
+    request. Because replay is pure and deterministic, any mutation sequence
+    produces identical budgets, ROAS, and hygiene counts across serverless
+    instances.
+
+Numeric precision invariant:
+    Budget math uses fixed-point `Decimal` (`BUDGET_QUANTUM = 0.000001`,
+    `ROUND_HALF_UP`) rather than binary floats so repeated budget shifts never
+    drift by fractions of a cent or fail conservation-of-budget assertions.
+"""
 
 from __future__ import annotations
 

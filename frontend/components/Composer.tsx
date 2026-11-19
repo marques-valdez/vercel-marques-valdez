@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Chat input composer with UTF-16 surrogate sanitization and bounded length.
+ *
+ * `sanitizeComposerInput()` strips lone UTF-16 surrogates before slicing to
+ * `MAX_INPUT_CHARS` (2,000) so emoji boundaries never produce invalid JSON
+ * that the FastAPI boundary rejects. In default mode shows connected ad
+ * channels; in `architectMode` shows a live pre-send AI Gateway tier preview.
+ */
+
 import React, { useEffect, useRef } from 'react';
 import { previewGatewayRoute } from '@/lib/gateway-preview';
 import type { HealthStatus } from '@/lib/types';

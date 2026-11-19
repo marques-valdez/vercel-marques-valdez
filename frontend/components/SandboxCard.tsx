@@ -1,5 +1,15 @@
 'use client';
 
+/**
+ * Typed tool card for `analyze_in_sandbox` + interactive SQL workbench.
+ *
+ * Displays the aggregated performance table returned from Vercel Sandbox (or
+ * in-process SQLite fallback) and lets operators re-slice across all four
+ * allowlisted SQL templates (`POST /api/agent/sandbox/query`) without making
+ * another LLM call. Formats percentage columns before spend columns so mixed
+ * keys like `spend_delta_pct` render as `%` instead of `$`.
+ */
+
 import React, { useState } from 'react';
 import type { SandboxStatusData, SandboxToolOutput } from '@/lib/types';
 

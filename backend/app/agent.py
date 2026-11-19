@@ -1,4 +1,24 @@
-"""Stateless per-request LangGraph agent and AI Gateway ChatOpenAI client."""
+"""Stateless per-request LangGraph agent and Vercel AI Gateway ChatOpenAI client.
+
+Architecture role:
+    Keeps Fieldstone's existing Python + LangGraph agent runtime intact while
+    routing 100% of model traffic through Vercel AI Gateway's OpenAI-compatible
+    endpoint (`https://ai-gateway.vercel.sh/v1`) using OIDC (`VERCEL_OIDC_TOKEN`)
+    on Vercel deployments or `AI_GATEWAY_API_KEY` locally.
+
+Key design choices:
+    - `checkpointer=None`: each HTTP turn reconstructs state statelessly from
+      the client's bounded `UIMessage[]` history + Digital Twin mutations so
+      serverless/Fluid Compute instances hold zero session RAM.
+    - `GatewayChatOpenAI` subclasses `ChatOpenAI` because LangChain's default
+      parser strips AI Gateway's `provider_metadata.gateway` and `usage.cost`
+      fields needed for FinOps telemetry and failover attribution.
+    - `extra_body={"providerOptions": {"gateway": {"models": ..., "caching": "auto"}}}`
+      delegates ordered model failover and prompt caching to AI Gateway without
+      hardcoding vendor SDKs or restricting provider eligibility (`order`/`only`).
+    - `temperature` is intentionally omitted because newer Claude 5.5 models
+      reject explicit temperature parameters.
+"""
 
 from __future__ import annotations
 
@@ -265,6 +285,9 @@ def build_agent_graph(
         writer({"kind": "step_start"})
 
         t0 = time.perf_counter()
+        # Inject a synthetic primary 503 outage locally when the X-Ray drill is
+        # armed so we can verify fallback execution without waiting for a real
+        # provider outage; badge `failover="simulated"` honestly in telemetry.
         if inject_failure:
             try:
                 raise SyntheticPrimaryOutageError(

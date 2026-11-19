@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Opt-in Architect X-Ray side drawer for technical walkthroughs and FinOps audits.
+ *
+ * Combines live session spend + Enterprise Paid-Tier Counterfactual savings
+ * math, a Production-vs-Demo transparency matrix, the live `backend/app/ui_stream.py`
+ * SSE adapter source, and `/api/agent/health` Vercel Services deployment metadata.
+ */
+
 import React, { useEffect, useState } from 'react';
 import { computeEnterpriseCounterfactual } from '@/lib/gateway-preview';
 import type { HealthStatus, RelayUIMessage, TelemetryData } from '@/lib/types';

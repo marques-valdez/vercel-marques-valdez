@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Typed tool card for `compile_workflow`.
+ *
+ * Streams live 6-step dry runs directly from `POST /api/agent/workflow/run`
+ * over SSE (with unmount `AbortController` cleanup and chunk-boundary framing)
+ * and links into both the full-screen `WorkflowsDrawer` DAG visualizer and the
+ * `ShareModal` playbook URL builder.
+ */
+
 import React, { useEffect, useRef, useState } from 'react';
 import { CHANNEL_LABELS } from '@/lib/playbooks';
 import { readStoredMutations } from '@/lib/twin-client';

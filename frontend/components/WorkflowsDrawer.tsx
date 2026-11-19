@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Slide-over Workflows flyout for managing saved recurring checks.
+ *
+ * Reads persisted workflows from `localStorage`, lets marketers rename or
+ * remove automations, inspect the 4-stage visual DAG (`WorkflowDagView`), run
+ * live SSE dry runs against the current Digital Twin state, or share a zero-DB
+ * playbook link.
+ */
+
 import React, { useEffect, useRef, useState } from 'react';
 import { CHANNEL_LABELS } from '@/lib/playbooks';
 import { readStoredMutations } from '@/lib/twin-client';

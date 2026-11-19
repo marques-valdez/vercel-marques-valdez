@@ -1,3 +1,11 @@
+/**
+ * Shared TypeScript contracts bridging Python FastAPI payloads and AI SDK 7 UI.
+ *
+ * `RelayUIMessage` parameterizes `ai`'s `UIMessage<Metadata, DataParts, Tools>`
+ * so `useChat()` produces strictly typed tool outputs (`HygieneToolOutput`,
+ * `SandboxToolOutput`, `ReallocationToolOutput`, `WorkflowToolOutput`) and
+ * custom SSE data parts (`data-telemetry`, `data-sandbox-status`).
+ */
 import type { UIMessage } from 'ai';
 
 export type ChannelId = 'google_ads' | 'linkedin_ads' | 'meta_ads';

@@ -1,3 +1,10 @@
+/**
+ * Canonical starter playbooks and 6-step workflow taxonomy for Relay Studio.
+ *
+ * Eliminates blank-screen cold-start drop-off by giving marketers four
+ * concrete entry points paired with explicit `tierHint` values (`fast` vs.
+ * `reasoning`) so card clicks route deterministically through AI Gateway.
+ */
 import type { ChannelId, PlaybookDefinition, PlaybookId, PlaybookStepInfo } from './types';
 
 export const CANONICAL_CHANNELS: readonly ChannelId[] = [

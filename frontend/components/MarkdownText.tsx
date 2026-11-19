@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Safe, zero-dependency Markdown renderer for assistant chat turns.
+ *
+ * Parses headings, bullet/numbered lists, bold/italic/code spans, and links
+ * directly into React elements without `dangerouslySetInnerHTML`, blocking
+ * unsafe URL schemes (`javascript:`, `data:`) so model output cannot inject XSS.
+ */
+
 import React from 'react';
 
 interface MarkdownTextProps {

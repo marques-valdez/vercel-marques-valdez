@@ -1,4 +1,16 @@
-"""Workflow compiler (Temporal Python preview + share slug) and 6-step SSE dry-run engine."""
+"""Workflow compiler (Temporal Python preview + share slug) and 6-step SSE dry-run engine.
+
+Architecture role:
+    Demonstrates the Option A boundary between interactive Vercel UI and
+    Fieldstone's existing Temporal worker architecture:
+    - `compile_workflow()` outputs a 6-node fan-out/fan-in DAG specification, a
+      zero-DB `base64url` share slug (matching `frontend/lib/share.ts`), and
+      display-only `temporalio` Python source representing what Fieldstone
+      deploys to its production Kubernetes Temporal workers.
+    - `stream_workflow_dry_run()` executes all 6 steps live in-app over SSE
+      (running Step 4 inside Vercel Sandbox / SQLite fallback) so marketers can
+      validate the workflow immediately without provisioning a Temporal cluster.
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Human-in-the-loop approval card for `propose_budget_reallocation`.
+ *
+ * Enforces the read-only proposal invariant: renders server-computed before
+ * and after daily budgets and blended ROAS deltas, and mutates Digital Twin
+ * state only when the operator explicitly clicks Approve (decision state is
+ * isolated per `toolCallId` in `WorkspaceClient`).
+ */
+
 import React, { useState } from 'react';
 import type { ReallocationToolOutput } from '@/lib/types';
 

@@ -1,4 +1,18 @@
-"""Two-tier deterministic AI Gateway model router for Relay Studio (zero extra model calls)."""
+"""Two-tier deterministic AI Gateway model router for Relay Studio (zero extra model calls).
+
+Why deterministic routing instead of an LLM router:
+    Using a second model call to classify intent adds latency and token cost to
+    every turn. Instead, Relay Studio inspects an explicit UI card `tier_hint`
+    first, then falls back to a regex over strategic/reallocation keywords
+    (`REASONING_KEYWORD_RE`). Routine hygiene and SQL summary turns stay on the
+    fast tier, while budget reallocations and workflow compilation route to the
+    reasoning tier.
+
+Configuration invariant:
+    Model IDs are read from `FAST_MODELS` and `REASONING_MODELS` env vars (never
+    hardcoded into call sites) so operators can swap Hobby free-tier defaults to
+    Frontier paid models without a code change.
+"""
 
 from __future__ import annotations
 

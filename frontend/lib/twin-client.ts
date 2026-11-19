@@ -1,3 +1,12 @@
+/**
+ * Browser-side Digital Twin mutation store (`localStorage`) and Python replay client.
+ *
+ * Zero-DB state model: rather than writing visitor edits to a shared database,
+ * approved budget shifts and hygiene fixes append to `relay.twin.mutations.v1`
+ * (capped at 50 validated entries). Every mutation immediately replays against
+ * `POST /api/agent/twin/state`; if Python rejects the log (HTTP 422), local
+ * storage rolls back atomically so UI and backend never diverge.
+ */
 import type { DerivedTwinState, Mutation } from './types';
 
 export const TWIN_STORAGE_KEY = 'relay.twin.mutations.v1';

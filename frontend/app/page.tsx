@@ -1,3 +1,12 @@
+/**
+ * Primary workspace Server Component (`/`).
+ *
+ * `force-dynamic` is required so query parameters (`?remix=<slug>` from shared
+ * playbook links and `?xray=1` for Architect X-Ray mode) resolve fresh on each
+ * request. Reads `backend/app/ui_stream.py` on the server once so the optional
+ * X-Ray Inspector can display the live Python SSE adapter source without an
+ * extra client fetch.
+ */
 import React from 'react';
 import { WorkspaceClient } from '@/components/WorkspaceClient';
 import { resolvePlaybookSlug } from '@/lib/share';

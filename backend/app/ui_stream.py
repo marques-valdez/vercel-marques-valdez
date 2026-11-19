@@ -1,4 +1,19 @@
-"""AI SDK UI Message Stream Protocol v1 adapter for Relay Studio's LangGraph agent."""
+"""AI SDK UI Message Stream Protocol v1 adapter for Relay Studio's LangGraph agent.
+
+Architecture role:
+    Bridges Python (`LangGraph` custom stream events) directly into Vercel's
+    frontend `@ai-sdk/react` `useChat()` hook (`ai@7`) without rewriting the
+    agent in TypeScript. Setting `x-vercel-ai-ui-message-stream: v1` tells
+    `DefaultChatTransport` to parse `start`, `text-delta`, `tool-input-available`,
+    `tool-output-available`, `data-telemetry`, `data-sandbox-status`, and
+    `finish` frames natively into typed React tool cards.
+
+Safety invariants:
+    - `TURN_TIMEOUT_SECONDS = 55.0` keeps turns inside serverless execution
+      limits and guarantees a clean terminal `error` + `finish` + `[DONE]` sequence.
+    - `sanitize_error_text()` strips local filesystem paths and API credentials
+      (provider keys and bearer tokens) before any exception reaches the browser stream.
+"""
 
 from __future__ import annotations
 

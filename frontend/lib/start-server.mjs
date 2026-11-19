@@ -1,3 +1,12 @@
+/**
+ * Local production server wrapper mirroring Vercel Services routing.
+ *
+ * On Vercel, `vercel.json` routes `/api/agent/*` to the Python FastAPI service
+ * at the platform layer. Locally (`npm start`), this lightweight Node HTTP
+ * server forwards `/api/agent/*` directly to `BACKEND_URL` in memory—preserving
+ * streaming SSE responses and zero disk writes—while serving all other routes
+ * through Next.js.
+ */
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';

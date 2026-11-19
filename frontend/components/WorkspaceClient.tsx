@@ -1,5 +1,23 @@
 'use client';
 
+/**
+ * Primary interactive workspace client for Relay Studio.
+ *
+ * Orchestrates the Marketing Manager default UI (channel health strip, starter
+ * playbooks, chat stream with typed AI SDK 7 tool cards, Workflows flyout, and
+ * playbook sharing) plus the opt-in `Architect X-Ray` mode (`X-Ray` header
+ * toggle or `/?xray=1`) that exposes live Vercel Services topology, AI Gateway
+ * route previews, 503 failover drills, SSE wire frames (`response.body.tee()`),
+ * and the FinOps Inspector drawer.
+ *
+ * State invariants:
+ * - Zero database: chat history (`chat-store.ts`), Twin mutations
+ *   (`twin-client.ts`), and saved workflows (`workflow-store.ts`) persist in
+ *   `localStorage` and clear atomically on `Reset changes`.
+ * - Approval isolation: reallocation approval decisions key off `part.toolCallId`
+ *   so repeated proposals in the same session never collide.
+ */
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
@@ -227,6 +245,9 @@ export function WorkspaceClient({
           ) {
             return response;
           }
+          // Tee the SSE response stream only when Architect X-Ray is enabled so
+          // the AI SDK consumes `sdkStream` unmodified while `tapStream` records
+          // raw v1 frames for ProtocolXRay with zero overhead in default view.
           const [sdkStream, tapStream] = response.body.tee();
           const captureOrderIdx = turnCaptureCounterRef.current;
           turnCaptureCounterRef.current += 1;
@@ -332,6 +353,9 @@ export function WorkspaceClient({
                 ? lastTierHintRef.current
                 : null;
 
+          // Bound history to 30 messages starting on a user turn to match
+          // `backend/app/ui_messages.py`'s `MAX_MESSAGES` contract and prevent
+          // orphaned leading assistant/tool messages from breaking tool-call pairing.
           const nonEmptyMessages = messages.filter(
             (msg) => msg.role !== 'assistant' || msg.parts.length > 0,
           );

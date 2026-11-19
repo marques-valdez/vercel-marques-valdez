@@ -1,3 +1,11 @@
+/**
+ * Root Next.js App Router layout for Relay Studio.
+ *
+ * Loads Vercel's Geist Sans + Geist Mono via `next/font/google` as CSS
+ * variables (zero external CDN flicker) and resolves `metadataBase` from
+ * Vercel deployment env vars so Open Graph `/api/og` links unfurl with
+ * absolute HTTPS URLs in Slack, LinkedIn, and X.
+ */
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { resolveMetadataBase } from '@/lib/share';

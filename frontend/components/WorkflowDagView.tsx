@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * 4-stage fan-out/fan-in visual workflow DAG renderer.
+ *
+ * Renders the 6 workflow steps as an interactive 4-column execution graph
+ * (Snapshot -> 3 parallel checks -> Alert rule -> Morning brief) with live
+ * SVG edge coloring during SSE dry runs and per-node detail inspection.
+ */
+
 import React, { useState } from 'react';
 import { resolveWorkflowDagSteps, type ResolvedDagStep } from '@/lib/workflow-store';
 import type { WorkflowToolOutput } from '@/lib/types';

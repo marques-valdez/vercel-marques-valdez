@@ -1,3 +1,10 @@
+/**
+ * Server-side helper loading `backend/app/ui_stream.py` for Architect X-Ray.
+ *
+ * Reads the live Python SSE adapter from disk during SSR so `ProtocolXRay` and
+ * `InspectorDrawer` can map captured wire frames directly to the exact Python
+ * lines that emitted them, with a safe fallback string if running isolated.
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 

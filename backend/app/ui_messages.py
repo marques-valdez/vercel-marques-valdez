@@ -1,4 +1,14 @@
-"""Inbound AI SDK UIMessage validation and conversion to LangChain messages."""
+"""Inbound AI SDK UIMessage validation and conversion to LangChain messages.
+
+Why this translation layer exists:
+    `@ai-sdk/react` (`useChat`) sends structured `UIMessage` objects containing
+    typed `parts` (`text`, `tool-*`, `dynamic-tool`, `data-*`), whereas
+    LangGraph expects `HumanMessage`, `AIMessage` (with `tool_calls`), and
+    `ToolMessage` sequences. This module enforces strict bounds (`MAX_MESSAGES=30`,
+    `MAX_USER_MESSAGE_CHARS=2000`), blocks unpaired UTF-16 surrogates, and drops
+    UI-only `data-*` telemetry parts so prior tool outputs replay cleanly into
+    multi-turn LLM context without token bloat.
+"""
 
 from __future__ import annotations
 

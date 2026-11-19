@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Live Digital Twin KPI strip across paid channels.
+ *
+ * Renders server-recomputed budgets, broken landing page counts, and UTM
+ * tracking gaps from `POST /api/agent/twin/state`. Highlights live session
+ * deltas (budget shifts and remediated issues) immediately after the user
+ * approves a reallocation or applies a 1-click hygiene fix.
+ */
+
 import React from 'react';
 import type { ChannelDelta, DerivedTwinState } from '@/lib/types';
 
