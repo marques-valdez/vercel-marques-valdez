@@ -5,48 +5,31 @@ import type { DerivedTwinState, TelemetryData } from '@/lib/types';
 
 interface HeaderBarProps {
   twinState: DerivedTwinState | null;
-  telemetryEntries: TelemetryData[];
-  inspectorOpen: boolean;
+  telemetryEntries?: TelemetryData[];
+  inspectorOpen?: boolean;
   workflowCount?: number;
   workflowsOpen?: boolean;
   onOpenShare: () => void;
   onToggleWorkflows?: () => void;
-  onToggleInspector: () => void;
+  onToggleInspector?: () => void;
+  onResetWorkspace?: () => void;
 }
 
 export function HeaderBar({
   twinState,
-  telemetryEntries,
-  inspectorOpen,
   workflowCount = 0,
   workflowsOpen = false,
   onOpenShare,
   onToggleWorkflows,
-  onToggleInspector,
+  onResetWorkspace,
 }: HeaderBarProps) {
-  const totalCostUsd = telemetryEntries.reduce((sum, item) => sum + item.costUsd, 0);
-  const totalBaselineUsd = telemetryEntries.reduce(
-    (sum, item) => sum + item.baselineCostUsd,
-    0,
-  );
-  const savingsPercent =
-    totalBaselineUsd > 0
-      ? Math.max(0, Math.round(((totalBaselineUsd - totalCostUsd) / totalBaselineUsd) * 100))
-      : 0;
+  const portfolioPillText = twinState
+    ? `${twinState.totals.campaignCount.toLocaleString('en-US')} active campaigns · $${Math.round(
+        twinState.totals.dailyBudget,
+      ).toLocaleString('en-US')}/day`
+    : 'Loading campaigns…';
 
-  const formattedCostUsd =
-    totalCostUsd > 0 && totalCostUsd < 0.01
-      ? totalCostUsd.toFixed(4)
-      : totalCostUsd.toFixed(2);
-
-  const sessionPillText =
-    telemetryEntries.length === 0
-      ? 'Session: $0.00'
-      : `Session: $${formattedCostUsd} · ${savingsPercent}% less than every turn on the reasoning model`;
-
-  const datasetPillText = twinState
-    ? `${twinState.totals.campaignCount.toLocaleString('en-US')} campaigns · ${twinState.totals.rowCount.toLocaleString('en-US')} rows`
-    : 'Loading dataset…';
+  const hasChanges = Boolean(twinState && twinState.totals.appliedMutations > 0);
 
   return (
     <header className="header-bar" role="banner">
@@ -74,24 +57,21 @@ export function HeaderBar({
           </span>
           <span className="brand-title">Fieldstone / Relay Studio</span>
           <span className="pill tabular-nums" data-testid="header-dataset-pill">
-            {datasetPillText}
+            {portfolioPillText}
           </span>
         </div>
 
         <div className="header-right">
-          <span
-            className="pill session-pill tabular-nums"
-            data-testid="session-spend-pill"
-          >
-            {sessionPillText}
-          </span>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={onOpenShare}
-          >
-            Share playbook
-          </button>
+          {hasChanges && onResetWorkspace ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onResetWorkspace}
+              data-testid="header-reset-button"
+            >
+              Reset changes
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn btn-secondary tabular-nums"
@@ -105,11 +85,9 @@ export function HeaderBar({
           <button
             type="button"
             className="btn btn-secondary"
-            aria-expanded={inspectorOpen}
-            aria-controls="inspector-drawer"
-            onClick={onToggleInspector}
+            onClick={onOpenShare}
           >
-            Inspector
+            Share playbook
           </button>
         </div>
       </div>

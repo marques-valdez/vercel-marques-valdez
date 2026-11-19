@@ -869,7 +869,7 @@ test('V2 Vercel showcase modules: gateway-preview, ProtocolXRay, VercelArchitect
   assert.equal(xrayHtml.includes('x-vercel-ai-ui-message-stream: v1'), true);
   assert.equal(xrayHtml.includes('backend/app/ui_stream.py'), true);
 
-  const sandboxHtml = ReactDOMServer.renderToStaticMarkup(
+    const sandboxHtml = ReactDOMServer.renderToStaticMarkup(
     React.createElement(SandboxCard, {
       state: 'completed',
       output: {
@@ -886,7 +886,7 @@ test('V2 Vercel showcase modules: gateway-preview, ProtocolXRay, VercelArchitect
     }),
   );
   assert.equal(sandboxHtml.includes('sandbox-preset-bar'), true);
-  assert.equal(sandboxHtml.includes('sandbox-context-meter'), true);
+  assert.equal(sandboxHtml.includes('Spend, pipeline &amp; return on ad spend'), true);
 });
 
 test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, WorkflowsDrawer flyout, and HeaderBar counter', () => {
@@ -895,6 +895,7 @@ test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, Workflows
   const {
     WORKFLOW_STORAGE_KEY,
     clearStoredWorkflows,
+    formatScheduleForMarketer,
     getWorkflowDisplayName,
     readStoredWorkflows,
     removeStoredWorkflow,
@@ -920,9 +921,13 @@ test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, Workflows
   };
 
   try {
+    assert.equal(formatScheduleForMarketer('0 7 * * *'), 'Daily at 7:00 AM UTC');
+    assert.equal(formatScheduleForMarketer('15 14 * * 1-5'), 'Weekdays at 2:15 PM UTC');
+
+    // Legacy workflow steps & title upgrade cleanly for Marketing Manager UI
     const sampleWf = {
       workflowId: 'wf_1234567890',
-      title: 'Paid Social Pacing Guardrail',
+      title: 'Compile a daily pacing guardrail',
       template: 'daily-pacing-guardrail',
       slug: '',
       channels: ['linkedin_ads', 'meta_ads'],
@@ -942,45 +947,58 @@ test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, Workflows
     const resolvedSteps = resolveWorkflowDagSteps(sampleWf);
     assert.equal(resolvedSteps.length, 6);
     assert.deepEqual(resolvedSteps[0].dependsOn, []);
-    assert.deepEqual(resolvedSteps[1].dependsOn, ['Fetch channels']);
-    assert.deepEqual(resolvedSteps[2].dependsOn, ['Fetch channels']);
-    assert.deepEqual(resolvedSteps[3].dependsOn, ['Fetch channels']);
+    assert.deepEqual(resolvedSteps[1].dependsOn, ['Pull active campaigns & budgets']);
+    assert.deepEqual(resolvedSteps[2].dependsOn, ['Pull active campaigns & budgets']);
+    assert.deepEqual(resolvedSteps[3].dependsOn, ['Pull active campaigns & budgets']);
     assert.deepEqual(resolvedSteps[4].dependsOn, [
-      'Check creative URL status',
-      'Validate UTM schema',
-      'Aggregate rows in Sandbox',
+      'Check landing pages for broken links',
+      'Verify UTM tracking tags',
+      'Calculate channel spend & ROAS',
     ]);
-    assert.deepEqual(resolvedSteps[5].dependsOn, ['Threshold gate']);
+    assert.deepEqual(resolvedSteps[5].dependsOn, ['Check wasted-spend alert rule']);
 
     assert.deepEqual(readStoredWorkflows(), []);
     const afterInsert = upsertStoredWorkflow(sampleWf, '2026-11-19T06:00:00Z');
     assert.equal(afterInsert.length, 1);
     assert.ok(backing.has(WORKFLOW_STORAGE_KEY));
-    assert.equal(getWorkflowDisplayName(afterInsert[0]), 'Paid Social Pacing Guardrail');
+    assert.equal(
+      getWorkflowDisplayName(afterInsert[0]),
+      'Daily pacing & broken-link check',
+    );
 
-    const afterRename = renameStoredWorkflow('wf_1234567890', 'Executive Morning Guard');
-    assert.equal(getWorkflowDisplayName(afterRename[0]), 'Executive Morning Guard');
+    const afterRename = renameStoredWorkflow('wf_1234567890', 'Weekday Paid Social Check');
+    assert.equal(getWorkflowDisplayName(afterRename[0]), 'Weekday Paid Social Check');
 
     const dagHtml = ReactDOMServer.renderToStaticMarkup(
       React.createElement(WorkflowDagView, {
         workflow: afterRename[0].workflow,
         stepStates: {
-          'Fetch channels': { status: 'completed', ms: 5 },
-          'Aggregate rows in Sandbox': { status: 'completed', ms: 24, mode: 'sandbox' },
+          'Pull active campaigns & budgets': { status: 'completed', ms: 5 },
+          'Calculate channel spend & ROAS': { status: 'completed', ms: 24 },
         },
       }),
     );
     assert.equal(dagHtml.includes('data-testid="workflow-dag-view"'), true);
     assert.equal(
-      dagHtml.includes('data-dag-edge="Fetch channels-&gt;Check creative URL status"'),
+      dagHtml.includes(
+        'data-dag-edge="Pull active campaigns &amp; budgets-&gt;Check landing pages for broken links"',
+      ),
       true,
     );
     assert.equal(
-      dagHtml.includes('data-dag-edge="Aggregate rows in Sandbox-&gt;Threshold gate"'),
+      dagHtml.includes(
+        'data-dag-edge="Calculate channel spend &amp; ROAS-&gt;Check wasted-spend alert rule"',
+      ),
       true,
     );
-    assert.equal(dagHtml.includes('data-dag-edge="Threshold gate-&gt;Digest"'), true);
-    assert.equal(dagHtml.includes('Vercel Sandbox'), true);
+    assert.equal(
+      dagHtml.includes(
+        'data-dag-edge="Check wasted-spend alert rule-&gt;Send morning Slack &amp; Sheets brief"',
+      ),
+      true,
+    );
+    assert.equal(dagHtml.includes('✓ Checked'), true);
+    assert.equal(dagHtml.includes('Vercel Sandbox'), false);
 
     const emptyDrawerHtml = ReactDOMServer.renderToStaticMarkup(
       React.createElement(WorkflowsDrawer, {
@@ -1010,9 +1028,9 @@ test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, Workflows
         onClose: () => {},
       }),
     );
-    assert.equal(drawerHtml.includes('Executive Morning Guard'), true);
-    assert.equal(drawerHtml.includes('wf_1234567890'), true);
-    assert.equal(drawerHtml.includes('In-app SSE dry run · Temporal code preview'), true);
+    assert.equal(drawerHtml.includes('Weekday Paid Social Check'), true);
+    assert.equal(drawerHtml.includes('Daily at 7:00 AM UTC'), true);
+    assert.equal(drawerHtml.includes('Temporal'), false);
 
     const cardWithDagBtnHtml = ReactDOMServer.renderToStaticMarkup(
       React.createElement(WorkflowCard, {
@@ -1023,18 +1041,15 @@ test('Workflow store, WorkflowDagView 4-stage fan-out/fan-in topology, Workflows
         onRetry: () => {},
       }),
     );
-    assert.equal(cardWithDagBtnHtml.includes('View DAG in Workflows'), true);
+    assert.equal(cardWithDagBtnHtml.includes('Open visual flow'), true);
 
     const headerHtml = ReactDOMServer.renderToStaticMarkup(
       React.createElement(HeaderBar, {
         twinState: null,
-        telemetryEntries: [],
-        inspectorOpen: false,
         workflowCount: 2,
         workflowsOpen: true,
         onOpenShare: () => {},
         onToggleWorkflows: () => {},
-        onToggleInspector: () => {},
       }),
     );
     assert.equal(headerHtml.includes('Workflows (2)'), true);

@@ -11,19 +11,23 @@ interface SandboxCardProps {
   onRetry: () => void;
 }
 
-interface SqlPresetOption {
-  id: 'channel_roas_summary' | 'campaign_roas_ranking' | 'daily_pacing_anomalies' | 'ad_group_efficiency';
+interface PerformanceViewOption {
+  id:
+    | 'channel_roas_summary'
+    | 'campaign_roas_ranking'
+    | 'daily_pacing_anomalies'
+    | 'ad_group_efficiency';
   label: string;
   zeroConversionsOnly?: boolean;
 }
 
-const SQL_PRESETS: SqlPresetOption[] = [
-  { id: 'channel_roas_summary', label: 'Channel ROAS' },
-  { id: 'campaign_roas_ranking', label: 'Campaign ranking' },
-  { id: 'daily_pacing_anomalies', label: 'Daily pacing spikes' },
+const PERFORMANCE_VIEWS: PerformanceViewOption[] = [
+  { id: 'channel_roas_summary', label: 'By channel' },
+  { id: 'campaign_roas_ranking', label: 'Top & bottom campaigns' },
+  { id: 'daily_pacing_anomalies', label: 'Daily spend spikes' },
   {
     id: 'ad_group_efficiency',
-    label: 'Zero-conv waste',
+    label: 'Zero-conversion spend',
     zeroConversionsOnly: true,
   },
 ];
@@ -34,6 +38,14 @@ const CHANNEL_FILTERS: Array<{ id: string | null; label: string }> = [
   { id: 'LinkedIn Ads', label: 'LinkedIn Ads' },
   { id: 'Meta Ads', label: 'Meta Ads' },
 ];
+
+function formatColumnHeading(col: string): string {
+  const clean = col.replace(/_/g, ' ').trim();
+  const upperAcronyms = clean.replace(/\b(roas|cpa|cpc|ctr|utm|id)\b/gi, (m) =>
+    m.toUpperCase(),
+  );
+  return upperAcronyms.charAt(0).toUpperCase() + upperAcronyms.slice(1);
+}
 
 export function formatCellValue(
   key: string,
@@ -83,7 +95,6 @@ export function formatCellValue(
 export function SandboxCard({
   state,
   output,
-  sandboxStatus,
   errorText,
   onRetry,
 }: SandboxCardProps) {
@@ -96,25 +107,16 @@ export function SandboxCard({
   const [sliceError, setSliceError] = useState<string | null>(null);
 
   if (state === 'skeleton') {
-    const activeStage = sandboxStatus?.stage ?? 'provisioning';
     return (
       <section
         className="tool-card accent-green"
         aria-busy="true"
-        aria-label="Running isolated SQLite query"
+        aria-label="Calculating campaign performance"
       >
-        <div className="tool-card-eyebrow">ISOLATED SQL ANALYTICS · @VERCEL/SANDBOX</div>
-        <ol className="sandbox-stage-stepper mono-text" data-testid="sandbox-stage-stepper">
-          <li className={activeStage === 'provisioning' ? 'stage-active' : 'stage-done'}>
-            1. Provision ephemeral microVM
-          </li>
-          <li className={activeStage === 'executing_sql' ? 'stage-active' : activeStage === 'completed' ? 'stage-done' : ''}>
-            2. Run parameterized sqlite3 over CSV
-          </li>
-          <li className={activeStage === 'completed' ? 'stage-done' : ''}>
-            3. Return compact JSON summary
-          </li>
-        </ol>
+        <div className="tool-card-eyebrow">CAMPAIGN PERFORMANCE</div>
+        <p className="workflow-step-desc">
+          Calculating spend, attributed pipeline, and return on ad spend…
+        </p>
         <div className="skeleton-line skeleton-medium" />
         <div className="skeleton-line skeleton-wide" />
       </section>
@@ -128,9 +130,9 @@ export function SandboxCard({
       <section className="tool-card error-card" role="alert">
         <div className="error-card-row">
           <div>
-            <div className="tool-card-eyebrow error-eyebrow">SANDBOX TOOL ERROR</div>
+            <div className="tool-card-eyebrow error-eyebrow">PERFORMANCE REPORT ERROR</div>
             <p className="error-card-body">
-              {errorText || 'Sandbox SQL aggregation failed.'}
+              {errorText || 'Unable to load campaign performance breakdown.'}
             </p>
           </div>
           <button type="button" className="btn btn-secondary" onClick={onRetry}>
@@ -142,7 +144,7 @@ export function SandboxCard({
   }
 
   const runDirectSlice = async (
-    preset: SqlPresetOption,
+    preset: PerformanceViewOption,
     channel: string | null,
   ) => {
     setSliceLoading(true);
@@ -161,13 +163,13 @@ export function SandboxCard({
         }),
       });
       if (!response.ok) {
-        throw new Error(`Sandbox query failed (${response.status})`);
+        throw new Error(`Performance report failed (${response.status})`);
       }
       const nextResult = (await response.json()) as SandboxToolOutput;
       setOverrideOutput(nextResult);
     } catch (err) {
       setSliceError(
-        err instanceof Error ? err.message : 'Unable to execute Sandbox SQL slice.',
+        err instanceof Error ? err.message : 'Unable to load performance view.',
       );
     } finally {
       setSliceLoading(false);
@@ -176,18 +178,6 @@ export function SandboxCard({
 
   const rows = effectiveOutput.table ?? [];
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
-  const compactSummaryTokens = Math.max(
-    40,
-    Math.round(JSON.stringify(rows).length / 4),
-  );
-  const totalContextTokens = Math.max(
-    1,
-    effectiveOutput.estTokensAvoided + compactSummaryTokens,
-  );
-  const keptInSandboxPct = Math.min(
-    99.9,
-    Math.max(0, (effectiveOutput.estTokensAvoided / totalContextTokens) * 100),
-  );
 
   const labelColumn =
     columns.find((col) =>
@@ -215,42 +205,37 @@ export function SandboxCard({
       )
     : 1;
 
-  const isSandboxLive = effectiveOutput.mode === 'sandbox';
-
   return (
     <section
-      className={`tool-card ${isSandboxLive ? 'accent-green' : 'accent-amber'}`}
+      className="tool-card accent-green"
       data-testid="sandbox-card"
-      aria-label="Sandbox SQL aggregation results"
+      aria-label="Campaign performance summary"
     >
       <div className="tool-card-header">
         <div>
-          <div className="tool-card-eyebrow">ISOLATED SQL ANALYTICS</div>
-          <h3 className="tool-card-title">Aggregated performance summary</h3>
+          <div className="tool-card-eyebrow">PAID MEDIA PERFORMANCE</div>
+          <h3 className="tool-card-title">Spend, pipeline &amp; return on ad spend</h3>
         </div>
-        <span
-          className={`pill ${isSandboxLive ? 'badge-green' : 'badge-amber'}`}
-          data-testid="sandbox-mode-badge"
-        >
-          <span
-            className={`status-dot ${isSandboxLive ? 'dot-green' : 'dot-amber'}`}
-            aria-hidden="true"
-          />
-          {isSandboxLive ? 'Vercel Sandbox' : 'In-process fallback'}
+        <span className="pill tabular-nums">
+          {`${effectiveOutput.rowsScanned.toLocaleString('en-US')} daily records`}
         </span>
       </div>
 
       <div className="sandbox-preset-bar" data-testid="sandbox-preset-bar">
-        <div className="sandbox-preset-group" role="group" aria-label="SQL template presets">
-          {SQL_PRESETS.map((preset) => (
+        <div
+          className="sandbox-preset-group"
+          role="group"
+          aria-label="Performance breakdown view"
+        >
+          {PERFORMANCE_VIEWS.map((preset) => (
             <button
               key={preset.id}
               type="button"
               disabled={sliceLoading}
               className={
                 activePresetKey === preset.id
-                  ? 'btn-chip btn-chip-active mono-text'
-                  : 'btn-chip mono-text'
+                  ? 'btn-chip btn-chip-active'
+                  : 'btn-chip'
               }
               onClick={() => void runDirectSlice(preset, activeChannel)}
               data-testid={`sandbox-preset-${preset.id}`}
@@ -272,7 +257,8 @@ export function SandboxCard({
               }
               onClick={() => {
                 const currentPreset =
-                  SQL_PRESETS.find((p) => p.id === activePresetKey) ?? SQL_PRESETS[0];
+                  PERFORMANCE_VIEWS.find((p) => p.id === activePresetKey) ??
+                  PERFORMANCE_VIEWS[0];
                 void runDirectSlice(currentPreset, ch.id);
               }}
             >
@@ -287,53 +273,6 @@ export function SandboxCard({
           {sliceError}
         </p>
       ) : null}
-
-      <div className="sandbox-kpi-strip tabular-nums">
-        <div className="kpi-chip">
-          <span className="kpi-chip-label">Rows scanned</span>
-          <strong className="kpi-chip-value">
-            {effectiveOutput.rowsScanned.toLocaleString('en-US')}
-          </strong>
-        </div>
-        <div className="kpi-chip">
-          <span className="kpi-chip-label">Rows returned</span>
-          <strong className="kpi-chip-value">
-            {effectiveOutput.rowsReturned.toLocaleString('en-US')}
-          </strong>
-        </div>
-        <div className="kpi-chip">
-          <span className="kpi-chip-label">Execution time</span>
-          <strong className="kpi-chip-value">
-            {`${Math.round(effectiveOutput.sandboxMs).toLocaleString('en-US')} ms`}
-          </strong>
-        </div>
-        <div className="kpi-chip">
-          <span className="kpi-chip-label">Tokens avoided (estimated)</span>
-          <strong className="kpi-chip-value">
-            {effectiveOutput.estTokensAvoided.toLocaleString('en-US')}
-          </strong>
-        </div>
-      </div>
-
-      <div
-        className="context-ratio-meter tabular-nums"
-        data-testid="sandbox-context-meter"
-      >
-        <div className="context-ratio-header mono-text">
-          <span>
-            {`Context isolated in Sandbox: ~${effectiveOutput.estTokensAvoided.toLocaleString('en-US')} tokens (${keptInSandboxPct.toFixed(1)}%)`}
-          </span>
-          <span>
-            {`Sent to LLM: ~${compactSummaryTokens.toLocaleString('en-US')} tokens`}
-          </span>
-        </div>
-        <div className="context-ratio-track" aria-hidden="true">
-          <div
-            className={`context-ratio-fill ${isSandboxLive ? 'bar-fill-green' : 'bar-fill-amber'}`}
-            style={{ width: `${keptInSandboxPct.toFixed(1)}%` }}
-          />
-        </div>
-      </div>
 
       {barMetricColumn && labelColumn && rows.length > 0 ? (
         <div className="bar-chart-list tabular-nums" aria-label="Comparison bars">
@@ -353,9 +292,7 @@ export function SandboxCard({
                 </div>
                 <div className="bar-track">
                   <div
-                    className={`bar-fill ${
-                      isSandboxLive ? 'bar-fill-green' : 'bar-fill-amber'
-                    }`}
+                    className="bar-fill bar-fill-green"
                     style={{ width: `${widthPct.toFixed(1)}%` }}
                   />
                 </div>
@@ -374,7 +311,7 @@ export function SandboxCard({
                   const isNumeric = typeof rows[0]?.[col] === 'number';
                   return (
                     <th key={col} scope="col" className={isNumeric ? 'num' : undefined}>
-                      {col.replace(/_/g, ' ')}
+                      {formatColumnHeading(col)}
                     </th>
                   );
                 })}
@@ -398,13 +335,6 @@ export function SandboxCard({
           </table>
         </div>
       ) : null}
-
-      <details className="technical-drawer">
-        <summary>Executed SQL</summary>
-        <pre className="code-block">
-          <code>{effectiveOutput.sql}</code>
-        </pre>
-      </details>
     </section>
   );
 }

@@ -203,7 +203,7 @@ async def test_adv_workflow_two_channel_est_tokens_avoided_matches_scoped_table(
     )
     assert step3_two["summary"]["estTokensAvoided"] == expected_two
     assert step3_two["summary"]["estTokensAvoided"] > step3_three["summary"]["estTokensAvoided"]
-    assert f"~{expected_two:,} est. tokens avoided" in step3_two["detail"]
+    assert "Calculated spend, pipeline, and ROAS across 2 channels" in step3_two["detail"]
 
 
 def test_adv_sandbox_budget_restore_cross_context_suppresses_value_error() -> None:
@@ -2177,18 +2177,18 @@ async def test_workflow_dag_dependencies_custom_naming_and_prompt_grounding() ->
     from app.workflow import normalize_workflow_name
 
     default_wf = compile_workflow()
-    assert default_wf["title"] == "Compile a daily pacing guardrail"
+    assert default_wf["title"] == "Daily pacing & broken-link check"
     assert [step["dependsOn"] for step in default_wf["steps"]] == [
         [],
-        ["Fetch channels"],
-        ["Fetch channels"],
-        ["Fetch channels"],
+        ["Pull active campaigns & budgets"],
+        ["Pull active campaigns & budgets"],
+        ["Pull active campaigns & budgets"],
         [
-            "Check creative URL status",
-            "Validate UTM schema",
-            "Aggregate rows in Sandbox",
+            "Check landing pages for broken links",
+            "Verify UTM tracking tags",
+            "Calculate channel spend & ROAS",
         ],
-        ["Threshold gate"],
+        ["Check wasted-spend alert rule"],
     ]
     assert "asyncio.gather(" in default_wf["temporalCode"]
     ast.parse(default_wf["temporalCode"])
@@ -2211,7 +2211,7 @@ async def test_workflow_dag_dependencies_custom_naming_and_prompt_grounding() ->
 
     prompt_text = build_system_prompt(compute_twin_state())
     assert "`Workflows` flyout" in prompt_text
-    assert "never invent non-existent pages" in prompt_text
-    assert "does NOT run a live Temporal server" in prompt_text
+    assert "Never invent non-existent pages" in prompt_text
+    assert "Marketing Manager" in prompt_text
 
 

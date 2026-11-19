@@ -36,9 +36,9 @@ export function HygieneCard({
       <section
         className="tool-card accent-blue"
         aria-busy="true"
-        aria-label="Auditing campaign hygiene"
+        aria-label="Checking landing pages and UTM tracking"
       >
-        <div className="tool-card-eyebrow">CAMPAIGN HYGIENE AUDIT</div>
+        <div className="tool-card-eyebrow">AD &amp; TRACKING QA</div>
         <div className="skeleton-line skeleton-medium" />
         <div className="skeleton-line skeleton-wide" />
         <div className="skeleton-line skeleton-wide" />
@@ -51,9 +51,9 @@ export function HygieneCard({
       <section className="tool-card error-card" role="alert">
         <div className="error-card-row">
           <div>
-            <div className="tool-card-eyebrow error-eyebrow">HYGIENE TOOL ERROR</div>
+            <div className="tool-card-eyebrow error-eyebrow">AUDIT ERROR</div>
             <p className="error-card-body">
-              {errorText || 'Failed to complete campaign hygiene audit.'}
+              {errorText || 'Unable to complete the ad link and UTM audit.'}
             </p>
           </div>
           <button type="button" className="btn btn-secondary" onClick={onRetry}>
@@ -82,7 +82,7 @@ export function HygieneCard({
       setAppliedLocal(true);
     } catch (err) {
       setApplyError(
-        err instanceof Error ? err.message : 'Unable to apply hygiene fixes.',
+        err instanceof Error ? err.message : 'Unable to apply ad and UTM fixes.',
       );
     } finally {
       setApplying(false);
@@ -93,16 +93,16 @@ export function HygieneCard({
     <section
       className="tool-card accent-blue"
       data-testid="hygiene-card"
-      aria-label="Campaign hygiene audit results"
+      aria-label="Ad link and UTM tracking audit results"
     >
       <div className="tool-card-header">
         <div>
-          <div className="tool-card-eyebrow">CAMPAIGN HYGIENE AUDIT</div>
-          <h3 className="tool-card-title">Broken destinations and UTM drift</h3>
+          <div className="tool-card-eyebrow">AD &amp; TRACKING QA</div>
+          <h3 className="tool-card-title">Broken landing pages &amp; UTM tracking issues</h3>
         </div>
         <div className="kpi-cluster tabular-nums">
           <span className="pill">
-            {`$${formatMoney(output.totalSpendAtRiskPerDay)}/day at risk`}
+            {`$${formatMoney(output.totalSpendAtRiskPerDay)}/day wasted or untagged`}
           </span>
         </div>
       </div>
@@ -115,9 +115,9 @@ export function HygieneCard({
                 <th scope="col">Channel</th>
                 <th scope="col">Campaign &amp; ad group</th>
                 <th scope="col">Issue</th>
-                <th scope="col">Flagged value</th>
+                <th scope="col">Flagged URL / UTM tag</th>
                 <th scope="col" className="num">
-                  Daily spend at risk
+                  Daily spend impacted
                 </th>
               </tr>
             </thead>
@@ -129,11 +129,13 @@ export function HygieneCard({
                   </td>
                   <td>
                     <div className="cell-primary">{item.campaignName}</div>
-                    <div className="cell-secondary mono-text">{item.adGroupId}</div>
+                    <div className="cell-secondary">{item.adGroupId}</div>
                   </td>
                   <td>
                     <span className="pill channel-pill">
-                      {item.issueType === 'broken_404' ? '404 URL' : 'UTM schema'}
+                      {item.issueType === 'broken_404'
+                        ? 'Broken 404 link'
+                        : 'UTM tag issue'}
                     </span>
                   </td>
                   <td className="mono-text cell-truncate" title={item.value}>
@@ -147,7 +149,7 @@ export function HygieneCard({
         </div>
       ) : (
         <p className="card-empty-note">
-          No active broken creative URLs or UTM schema violations remain in the current twin state.
+          All active landing pages and UTM tracking tags look healthy.
         </p>
       )}
 
@@ -165,7 +167,7 @@ export function HygieneCard({
             disabled
             data-testid="hygiene-fix-button"
           >
-            Applied
+            Fixes applied
           </button>
         ) : (
           <button
@@ -175,7 +177,7 @@ export function HygieneCard({
             onClick={() => void handleApplyClick()}
             data-testid="hygiene-fix-button"
           >
-            {`Fix ${displayUtmCount} UTMs and pause ${displayBrokenCount} creatives`}
+            {`Fix ${displayUtmCount} UTM tags & pause ${displayBrokenCount} broken ads`}
           </button>
         )}
       </div>

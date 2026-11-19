@@ -1,14 +1,15 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { CANONICAL_CHANNELS, CHANNEL_LABELS, WORKFLOW_NODE_NAMES } from '@/lib/playbooks';
-import { encodePlaybookSlug, PlaybookTemplateSchema, resolvePlaybookSlug } from '@/lib/share';
+import { CHANNEL_LABELS } from '@/lib/playbooks';
 import { readStoredMutations } from '@/lib/twin-client';
-import type {
-  ChannelId,
-  WorkflowRunStepEvent,
-  WorkflowToolOutput,
-} from '@/lib/types';
+import {
+  formatScheduleForMarketer,
+  normalizeWorkflowNodeName,
+  resolveValidWorkflowShareSlug,
+  resolveWorkflowDagSteps,
+} from '@/lib/workflow-store';
+import type { WorkflowRunStepEvent, WorkflowToolOutput } from '@/lib/types';
 
 interface WorkflowCardProps {
   state: 'skeleton' | 'completed' | 'error';
@@ -40,32 +41,6 @@ function formatDetail(detail: unknown): string {
   }
 }
 
-function resolveValidShareSlug(output: WorkflowToolOutput): string {
-  if (output.slug && resolvePlaybookSlug(output.slug)) {
-    return output.slug;
-  }
-  const parsedTemplate = PlaybookTemplateSchema.safeParse(output.template);
-  const template = parsedTemplate.success
-    ? parsedTemplate.data
-    : 'daily-pacing-guardrail';
-  const validChannels: ChannelId[] = Array.isArray(output.channels)
-    ? CANONICAL_CHANNELS.filter((c) => output.channels.includes(c))
-    : [];
-  const rawThreshold = Number(output.threshold);
-  const clampedThreshold = Number.isFinite(rawThreshold)
-    ? Math.min(100, Math.max(1, Math.round(rawThreshold)))
-    : 15;
-
-  return encodePlaybookSlug({
-    template,
-    channels:
-      validChannels.length > 0
-        ? validChannels
-        : ['google_ads', 'linkedin_ads', 'meta_ads'],
-    threshold: clampedThreshold,
-  });
-}
-
 export function WorkflowCard({
   state,
   output,
@@ -91,9 +66,9 @@ export function WorkflowCard({
       <section
         className="tool-card accent-blue"
         aria-busy="true"
-        aria-label="Compiling guardrail workflow"
+        aria-label="Setting up recurring campaign check"
       >
-        <div className="tool-card-eyebrow">GUARDRAIL WORKFLOW</div>
+        <div className="tool-card-eyebrow">RECURRING CAMPAIGN CHECK</div>
         <div className="skeleton-line skeleton-medium" />
         <div className="skeleton-line skeleton-wide" />
         <div className="skeleton-line skeleton-wide" />
@@ -106,9 +81,9 @@ export function WorkflowCard({
       <section className="tool-card error-card" role="alert">
         <div className="error-card-row">
           <div>
-            <div className="tool-card-eyebrow error-eyebrow">WORKFLOW TOOL ERROR</div>
+            <div className="tool-card-eyebrow error-eyebrow">WORKFLOW SETUP ERROR</div>
             <p className="error-card-body">
-              {errorText || 'Failed to compile scheduled workflow.'}
+              {errorText || 'Unable to set up the recurring campaign check.'}
             </p>
           </div>
           <button type="button" className="btn btn-secondary" onClick={onRetry}>
@@ -119,13 +94,7 @@ export function WorkflowCard({
     );
   }
 
-  const orderedNodes = WORKFLOW_NODE_NAMES.map((canonicalNode, idx) => {
-    const matched = output.steps?.find((s) => s.node === canonicalNode) ?? output.steps?.[idx];
-    return {
-      node: canonicalNode,
-      description: matched?.description || '',
-    };
-  });
+  const orderedNodes = resolveWorkflowDagSteps(output);
 
   const handleTestRun = async () => {
     dryRunAbortRef.current?.abort();
@@ -156,7 +125,7 @@ export function WorkflowCard({
       });
 
       if (!response.ok || !response.body) {
-        throw new Error(`Dry run failed (${response.status})`);
+        throw new Error(`Preview check failed (${response.status})`);
       }
 
       const reader = response.body.getReader();
@@ -169,7 +138,10 @@ export function WorkflowCard({
         if (evt.stepIndex === 0) {
           sawZeroStepIndex = true;
         }
-        const matchedIndex = orderedNodes.findIndex((s) => s.node === evt.node);
+        const normalizedEvtNode = normalizeWorkflowNodeName(evt.node);
+        const matchedIndex = orderedNodes.findIndex(
+          (s) => s.node === normalizedEvtNode,
+        );
         const fallbackIdx =
           typeof evt.stepIndex === 'number'
             ? !sawZeroStepIndex &&
@@ -183,10 +155,10 @@ export function WorkflowCard({
         const targetNode =
           resolvedIdx >= 0 && resolvedIdx < orderedNodes.length
             ? orderedNodes[resolvedIdx].node
-            : evt.node;
+            : normalizedEvtNode;
 
         const detailText = formatDetail(evt.detail);
-        if (targetNode === 'Digest' && detailText) {
+        if (resolvedIdx === orderedNodes.length - 1 && detailText) {
           setDigestPreview(detailText);
         }
 
@@ -250,7 +222,7 @@ export function WorkflowCard({
               const errMsg =
                 (typeof rawParsed?.errorText === 'string' && rawParsed.errorText) ||
                 (typeof rawParsed?.error === 'string' && rawParsed.error) ||
-                'Workflow dry run returned an invalid step frame.';
+                'Preview check returned an unexpected step response.';
               throw new Error(errMsg);
             }
             applyEvent(rawParsed as unknown as WorkflowRunStepEvent);
@@ -292,7 +264,7 @@ export function WorkflowCard({
         return next;
       });
       setDryRunError(
-        err instanceof Error ? err.message : 'Workflow dry run encountered an error.',
+        err instanceof Error ? err.message : 'Preview check encountered an error.',
       );
     } finally {
       if (dryRunAbortRef.current === controller) {
@@ -304,22 +276,24 @@ export function WorkflowCard({
     }
   };
 
-  const shareSlug = resolveValidShareSlug(output);
+  const shareSlug = resolveValidWorkflowShareSlug(output);
 
   return (
     <section
       className="tool-card accent-blue"
       data-testid="workflow-card"
-      aria-label="Compiled six-node workflow"
+      aria-label="Scheduled campaign check"
     >
       <div className="tool-card-header">
         <div>
-          <div className="tool-card-eyebrow">COMPILED GUARDRAIL WORKFLOW</div>
+          <div className="tool-card-eyebrow">RECURRING CAMPAIGN CHECK</div>
           <h3 className="tool-card-title">{output.title}</h3>
         </div>
         <div className="kpi-cluster tabular-nums">
-          {output.schedule ? <span className="pill mono-text">{output.schedule}</span> : null}
-          <span className="pill">{`Threshold: ${output.threshold}%`}</span>
+          <span className="pill">{formatScheduleForMarketer(output.schedule)}</span>
+          <span className="pill">
+            {`Alert if ≥ ${output.threshold}% spend at risk`}
+          </span>
         </div>
       </div>
 
@@ -345,22 +319,15 @@ export function WorkflowCard({
                 <div className="workflow-step-title-group">
                   <span className="workflow-step-index">{index + 1}</span>
                   <strong className="workflow-step-name">{step.node}</strong>
-                  {runInfo?.mode === 'sandbox' ? (
-                    <span className="pill channel-pill">Vercel Sandbox</span>
-                  ) : runInfo?.mode === 'in-process' ? (
-                    <span className="pill channel-pill">In-process fallback</span>
-                  ) : null}
                 </div>
-                <div className="workflow-step-timing mono-text">
+                <div className="workflow-step-timing">
                   {status === 'running'
-                    ? 'Running…'
+                    ? 'Checking…'
                     : status === 'failed'
-                      ? typeof runInfo?.ms === 'number'
-                        ? `Failed · ${Math.round(runInfo.ms).toLocaleString('en-US')} ms`
-                        : 'Failed'
-                      : typeof runInfo?.ms === 'number'
-                        ? `${Math.round(runInfo.ms).toLocaleString('en-US')} ms`
-                        : 'Ready'}
+                      ? 'Needs review'
+                      : status === 'completed'
+                        ? '✓ Checked'
+                        : 'Included'}
                 </div>
               </div>
               {runInfo?.detail ? (
@@ -376,7 +343,7 @@ export function WorkflowCard({
       {digestPreview ? (
         <div className="digest-preview-box" data-testid="workflow-digest-preview">
           <div className="digest-preview-header">
-            Digest preview (rendered in UI only — nothing sent to Slack or Sheets)
+            Sample morning Slack &amp; Google Sheets brief
           </div>
           <pre className="digest-preview-text">{digestPreview}</pre>
         </div>
@@ -388,18 +355,6 @@ export function WorkflowCard({
         </p>
       ) : null}
 
-      <details className="technical-drawer">
-        <summary>Temporal Python workflow code</summary>
-        <div className="temporal-drawer-body">
-          <p className="temporal-disclaimer">
-            Generated for production. Not executed in this demo.
-          </p>
-          <pre className="code-block">
-            <code>{output.temporalCode}</code>
-          </pre>
-        </div>
-      </details>
-
       <div className="tool-card-footer">
         <div className="card-actions-inline">
           <button
@@ -409,15 +364,7 @@ export function WorkflowCard({
             onClick={() => void handleTestRun()}
             data-testid="workflow-test-run-button"
           >
-            {runningDryRun ? 'Running dry run…' : 'Test run'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => onShare(shareSlug)}
-            data-testid="workflow-share-button"
-          >
-            Share playbook
+            {runningDryRun ? 'Checking campaigns…' : 'Preview check now'}
           </button>
           {onOpenInDrawer ? (
             <button
@@ -426,9 +373,17 @@ export function WorkflowCard({
               onClick={() => onOpenInDrawer(output.workflowId)}
               data-testid="workflow-open-dag-button"
             >
-              View DAG in Workflows
+              Open visual flow
             </button>
           ) : null}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onShare(shareSlug)}
+            data-testid="workflow-share-button"
+          >
+            Share with team
+          </button>
         </div>
       </div>
     </section>

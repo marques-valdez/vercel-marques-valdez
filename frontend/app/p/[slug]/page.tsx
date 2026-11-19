@@ -99,25 +99,10 @@ export default async function SharedPlaybookPage({
               </span>
             ))}
             <span className="pill">
-              {`Threshold guardrail: ${resolved.threshold}%`}
+              {`Alert when ≥ ${resolved.threshold}% of daily spend is at risk`}
             </span>
-            <span className="pill">{`${resolved.steps.length} steps`}</span>
-            <span className="pill mono-text">Zod validated · 0 DB reads</span>
+            <span className="pill">{`${resolved.steps.length} check steps`}</span>
           </div>
-
-          <details className="technical-drawer">
-            <summary>Live next/og social card preview (1200×630 PNG)</summary>
-            <div className="og-unfurl-card">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/api/og?slug=${encodeURIComponent(slug)}`}
-                width={1200}
-                height={630}
-                alt={`${resolved.title} Open Graph preview`}
-                className="og-preview-img"
-              />
-            </div>
-          </details>
 
           <ol className="workflow-step-list tabular-nums">
             {resolved.steps.map((step, index) => (

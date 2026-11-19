@@ -4,7 +4,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CHANNEL_LABELS } from '@/lib/playbooks';
 import { readStoredMutations } from '@/lib/twin-client';
 import {
+  formatScheduleForMarketer,
   getWorkflowDisplayName,
+  normalizeWorkflowNodeName,
   resolveValidWorkflowShareSlug,
   resolveWorkflowDagSteps,
 } from '@/lib/workflow-store';
@@ -50,7 +52,6 @@ export function WorkflowsDrawer({
 }: WorkflowsDrawerProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>('');
-  const [copiedCode, setCopiedCode] = useState(false);
 
   const [runningDryRun, setRunningDryRun] = useState(false);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
@@ -73,7 +74,6 @@ export function WorkflowsDrawer({
       dryRunAbortRef.current?.abort();
       setRunningDryRun(false);
       setEditingId(null);
-      setCopiedCode(false);
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -107,15 +107,6 @@ export function WorkflowsDrawer({
   const handleCommitRename = (workflowId: string) => {
     onRenameWorkflow(workflowId, draftName);
     setEditingId(null);
-  };
-
-  const handleCopyTemporalCode = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopiedCode(true);
-    } catch {
-      // Ignore clipboard failures in restricted contexts
-    }
   };
 
   const handleRunDryRun = async () => {
@@ -155,7 +146,7 @@ export function WorkflowsDrawer({
       });
 
       if (!response.ok || !response.body) {
-        throw new Error(`Dry run failed (${response.status})`);
+        throw new Error(`Preview check failed (${response.status})`);
       }
 
       const reader = response.body.getReader();
@@ -168,7 +159,10 @@ export function WorkflowsDrawer({
         if (evt.stepIndex === 0) {
           sawZeroStepIndex = true;
         }
-        const matchedIndex = orderedNodes.findIndex((s) => s.node === evt.node);
+        const normalizedEvtNode = normalizeWorkflowNodeName(evt.node);
+        const matchedIndex = orderedNodes.findIndex(
+          (s) => s.node === normalizedEvtNode,
+        );
         const fallbackIdx =
           typeof evt.stepIndex === 'number'
             ? !sawZeroStepIndex &&
@@ -182,10 +176,10 @@ export function WorkflowsDrawer({
         const targetNode =
           resolvedIdx >= 0 && resolvedIdx < orderedNodes.length
             ? orderedNodes[resolvedIdx].node
-            : evt.node;
+            : normalizedEvtNode;
 
         const detailText = formatDetail(evt.detail);
-        if (targetNode === 'Digest' && detailText) {
+        if (resolvedIdx === orderedNodes.length - 1 && detailText) {
           setDigestPreviewByWf((prev) => ({ ...prev, [targetWfId]: detailText }));
         }
 
@@ -256,7 +250,7 @@ export function WorkflowsDrawer({
               const errMsg =
                 (typeof rawParsed?.errorText === 'string' && rawParsed.errorText) ||
                 (typeof rawParsed?.error === 'string' && rawParsed.error) ||
-                'Workflow dry run returned an invalid step frame.';
+                'Preview check returned an unexpected step response.';
               throw new Error(errMsg);
             }
             applyEvent(rawParsed as unknown as WorkflowRunStepEvent);
@@ -270,7 +264,7 @@ export function WorkflowsDrawer({
       }
 
       if (!sawDone || buffer.trim().length > 0) {
-        throw new Error('Workflow dry run stream ended prematurely before [DONE].');
+        throw new Error('Preview stream ended prematurely before [DONE].');
       }
 
       setStepStatesByWf((prev) => {
@@ -301,7 +295,7 @@ export function WorkflowsDrawer({
         return { ...prev, [targetWfId]: nextWf };
       });
       setDryRunError(
-        err instanceof Error ? err.message : 'Workflow dry run encountered an error.',
+        err instanceof Error ? err.message : 'Preview check encountered an error.',
       );
     } finally {
       if (dryRunAbortRef.current === controller) {
@@ -333,9 +327,9 @@ export function WorkflowsDrawer({
       >
         <div className="inspector-header">
           <div>
-            <div className="tool-card-eyebrow">GENERATED WORKFLOWS &amp; DAG</div>
+            <div className="tool-card-eyebrow">RECURRING CAMPAIGN CHECKS</div>
             <h2 id="workflows-drawer-title" className="inspector-title">
-              Compiled Guardrail Workflows
+              Saved Campaign Workflows
             </h2>
           </div>
           <button
@@ -354,11 +348,11 @@ export function WorkflowsDrawer({
               className="workflows-empty-state"
               data-testid="workflows-empty-state"
             >
-              <h3 className="inspector-section-title">No workflows compiled yet</h3>
+              <h3 className="inspector-section-title">No recurring checks saved yet</h3>
               <p className="inspector-note">
-                Ask Relay to compile a pacing or hygiene guardrail in chat, or launch
-                the starter guardrail below. Every compiled workflow is saved in browser
-                localStorage with its name and 6-step fan-out/fan-in DAG.
+                Ask Relay in chat to set up a daily budget pacing or broken-link check,
+                or start with the morning check below. Each check you create appears
+                here with its visual step-by-step flow.
               </p>
               <div>
                 <button
@@ -370,7 +364,7 @@ export function WorkflowsDrawer({
                   }}
                   data-testid="workflows-compile-sample-button"
                 >
-                  Compile daily pacing guardrail
+                  Set up daily pacing &amp; link check
                 </button>
               </div>
             </section>
@@ -378,20 +372,18 @@ export function WorkflowsDrawer({
             <>
               <section className="inspector-section">
                 <div className="workflows-list-header">
-                  <h3 className="inspector-section-title">
-                    Select a generated workflow
-                  </h3>
+                  <h3 className="inspector-section-title">Your saved checks</h3>
                   <span className="pill tabular-nums">
                     {workflows.length === 1
-                      ? '1 saved in browser'
-                      : `${workflows.length} saved in browser`}
+                      ? '1 active check'
+                      : `${workflows.length} active checks`}
                   </span>
                 </div>
 
                 <div
                   className="workflow-selector-list"
                   role="listbox"
-                  aria-label="Generated workflows"
+                  aria-label="Saved campaign workflows"
                 >
                   {workflows.map((record) => {
                     const wf = record.workflow;
@@ -414,7 +406,6 @@ export function WorkflowsDrawer({
                           className="workflow-selector-main"
                           onClick={() => {
                             setDryRunError(null);
-                            setCopiedCode(false);
                             onSelectWorkflow(wf.workflowId);
                           }}
                         >
@@ -422,7 +413,6 @@ export function WorkflowsDrawer({
                             <span className="workflow-selector-name">
                               {displayName}
                             </span>
-                            <span className="pill mono-text">{wf.workflowId}</span>
                           </div>
                           <div className="workflow-selector-meta tabular-nums">
                             <span>
@@ -431,13 +421,9 @@ export function WorkflowsDrawer({
                                 .join(', ')}
                             </span>
                             <span>·</span>
-                            <span>{`Threshold ${wf.threshold}%`}</span>
-                            {wf.schedule ? (
-                              <>
-                                <span>·</span>
-                                <span className="mono-text">{wf.schedule}</span>
-                              </>
-                            ) : null}
+                            <span>{formatScheduleForMarketer(wf.schedule)}</span>
+                            <span>·</span>
+                            <span>{`Alert ≥ ${wf.threshold}% at risk`}</span>
                           </div>
                         </button>
 
@@ -499,7 +485,7 @@ export function WorkflowsDrawer({
                         </form>
                       ) : (
                         <>
-                          <div className="tool-card-eyebrow">SELECTED WORKFLOW DAG</div>
+                          <div className="tool-card-eyebrow">AUTOMATION FLOW</div>
                           <h3 className="workflow-detail-title">
                             {getWorkflowDisplayName(activeRecord)}
                           </h3>
@@ -508,18 +494,12 @@ export function WorkflowsDrawer({
                     </div>
 
                     <div className="kpi-cluster tabular-nums">
-                      <span
-                        className="pill"
-                        title="Generated Temporal Python SDK code is a display-only Option A artifact; dry runs execute in-app via FastAPI SSE and Vercel Sandbox."
-                      >
-                        In-app SSE dry run · Temporal code preview
+                      <span className="pill">
+                        {formatScheduleForMarketer(activeWorkflow.schedule)}
                       </span>
-                      {activeWorkflow.schedule ? (
-                        <span className="pill mono-text">
-                          {activeWorkflow.schedule}
-                        </span>
-                      ) : null}
-                      <span className="pill">{`Threshold: ${activeWorkflow.threshold}%`}</span>
+                      <span className="pill">
+                        {`Alert if ≥ ${activeWorkflow.threshold}% of daily spend at risk`}
+                      </span>
                     </div>
                   </div>
 
@@ -545,7 +525,7 @@ export function WorkflowsDrawer({
                       onClick={() => void handleRunDryRun()}
                       data-testid="drawer-workflow-test-run-button"
                     >
-                      {runningDryRun ? 'Running dry run…' : 'Test run'}
+                      {runningDryRun ? 'Checking campaigns…' : 'Preview check now'}
                     </button>
                     <button
                       type="button"
@@ -555,7 +535,7 @@ export function WorkflowsDrawer({
                       }
                       data-testid="drawer-workflow-share-button"
                     >
-                      Share playbook
+                      Share with team
                     </button>
                   </div>
 
@@ -565,8 +545,7 @@ export function WorkflowsDrawer({
                       data-testid="drawer-workflow-digest-preview"
                     >
                       <div className="digest-preview-header">
-                        Digest preview (rendered in UI only — nothing sent to Slack or
-                        Sheets)
+                        Sample morning Slack &amp; Google Sheets brief
                       </div>
                       <pre className="digest-preview-text">{activeDigest}</pre>
                     </div>
@@ -577,33 +556,6 @@ export function WorkflowsDrawer({
                       {dryRunError}
                     </p>
                   ) : null}
-
-                  <details className="technical-drawer">
-                    <summary>
-                      Temporal Python workflow code (display-only Option A preview)
-                    </summary>
-                    <div className="temporal-drawer-body">
-                      <div className="adapter-header-row">
-                        <p className="temporal-disclaimer">
-                          Generated `temporalio` SDK source for Fieldstone Kubernetes +
-                          Temporal workers. Relay Studio does not run a live Temporal
-                          cluster; dry runs execute in-process and in Vercel Sandbox.
-                        </p>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() =>
-                            void handleCopyTemporalCode(activeWorkflow.temporalCode)
-                          }
-                        >
-                          {copiedCode ? '✓ Copied!' : 'Copy code'}
-                        </button>
-                      </div>
-                      <pre className="code-block">
-                        <code>{activeWorkflow.temporalCode}</code>
-                      </pre>
-                    </div>
-                  </details>
                 </section>
               ) : null}
             </>

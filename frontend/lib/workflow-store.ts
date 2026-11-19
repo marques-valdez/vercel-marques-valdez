@@ -1,4 +1,4 @@
-import { CANONICAL_CHANNELS, WORKFLOW_NODE_NAMES } from './playbooks';
+import { CANONICAL_CHANNELS, PLAYBOOKS, WORKFLOW_NODE_NAMES } from './playbooks';
 import { encodePlaybookSlug, PlaybookTemplateSchema, resolvePlaybookSlug } from './share';
 import type {
   ChannelId,
@@ -10,27 +10,47 @@ import type {
 export const WORKFLOW_STORAGE_KEY = 'relay.workflows.v1';
 export const MAX_STORED_WORKFLOWS = 25;
 
+const LEGACY_NODE_NAME_ALIASES: Readonly<Record<string, string>> = {
+  'Fetch channels': 'Pull active campaigns & budgets',
+  'Check creative URL status': 'Check landing pages for broken links',
+  'Validate UTM schema': 'Verify UTM tracking tags',
+  'Aggregate rows in Sandbox': 'Calculate channel spend & ROAS',
+  'Threshold gate': 'Check wasted-spend alert rule',
+  Digest: 'Send morning Slack & Sheets brief',
+};
+
+const LEGACY_TITLE_UPGRADES: Readonly<Record<string, string>> = {
+  'Compile a daily pacing guardrail': 'Daily pacing & broken-link check',
+  'Creative and UTM hygiene audit': 'Audit broken ad links & UTM tags',
+  'Cross-channel return analysis': 'Compare channel spend, pipeline & ROAS',
+  'Reallocate wasted paid social spend': 'Shift wasted social spend to top search',
+};
+
 export const CANONICAL_WORKFLOW_DEPENDENCIES: Readonly<Record<string, readonly string[]>> = {
-  'Fetch channels': [],
-  'Check creative URL status': ['Fetch channels'],
-  'Validate UTM schema': ['Fetch channels'],
-  'Aggregate rows in Sandbox': ['Fetch channels'],
-  'Threshold gate': [
-    'Check creative URL status',
-    'Validate UTM schema',
-    'Aggregate rows in Sandbox',
+  'Pull active campaigns & budgets': [],
+  'Check landing pages for broken links': ['Pull active campaigns & budgets'],
+  'Verify UTM tracking tags': ['Pull active campaigns & budgets'],
+  'Calculate channel spend & ROAS': ['Pull active campaigns & budgets'],
+  'Check wasted-spend alert rule': [
+    'Check landing pages for broken links',
+    'Verify UTM tracking tags',
+    'Calculate channel spend & ROAS',
   ],
-  Digest: ['Threshold gate'],
+  'Send morning Slack & Sheets brief': ['Check wasted-spend alert rule'],
 };
 
 const CANONICAL_STAGE_BY_NODE: Readonly<Record<string, 0 | 1 | 2 | 3>> = {
-  'Fetch channels': 0,
-  'Check creative URL status': 1,
-  'Validate UTM schema': 1,
-  'Aggregate rows in Sandbox': 1,
-  'Threshold gate': 2,
-  Digest: 3,
+  'Pull active campaigns & budgets': 0,
+  'Check landing pages for broken links': 1,
+  'Verify UTM tracking tags': 1,
+  'Calculate channel spend & ROAS': 1,
+  'Check wasted-spend alert rule': 2,
+  'Send morning Slack & Sheets brief': 3,
 };
+
+const DEFAULT_STEP_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fromEntries(
+  PLAYBOOKS[3].steps.map((s) => [s.node, s.description]),
+);
 
 export interface ResolvedDagStep {
   index: number;
@@ -38,6 +58,47 @@ export interface ResolvedDagStep {
   description: string;
   dependsOn: string[];
   stage: 0 | 1 | 2 | 3;
+}
+
+export function normalizeWorkflowNodeName(rawNode: string): string {
+  return LEGACY_NODE_NAME_ALIASES[rawNode] ?? rawNode;
+}
+
+export function formatScheduleForMarketer(schedule?: string): string {
+  if (!schedule || !schedule.trim()) {
+    return 'Daily at 7:00 AM UTC';
+  }
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length === 5) {
+    const [minStr, hourStr, dom, month, dow] = parts;
+    const min = Number.parseInt(minStr, 10);
+    const hour = Number.parseInt(hourStr, 10);
+    if (
+      Number.isInteger(min) &&
+      min >= 0 &&
+      min <= 59 &&
+      Number.isInteger(hour) &&
+      hour >= 0 &&
+      hour <= 23 &&
+      dom === '*' &&
+      month === '*'
+    ) {
+      const period = hour >= 12 ? 'PM' : 'AM';
+      const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+      const displayMin = String(min).padStart(2, '0');
+      const timeText = `${displayHour}:${displayMin} ${period} UTC`;
+      if (dow === '*') {
+        return `Daily at ${timeText}`;
+      }
+      if (dow === '1-5') {
+        return `Weekdays at ${timeText}`;
+      }
+      if (dow === '1') {
+        return `Mondays at ${timeText}`;
+      }
+    }
+  }
+  return `Scheduled (${schedule.trim()})`;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -163,18 +224,29 @@ export function resolveValidWorkflowShareSlug(output: WorkflowToolOutput): strin
 export function resolveWorkflowDagSteps(output: WorkflowToolOutput): ResolvedDagStep[] {
   return WORKFLOW_NODE_NAMES.map((canonicalNode, idx) => {
     const matched =
-      output.steps?.find((s) => s.node === canonicalNode) ?? output.steps?.[idx];
+      output.steps?.find(
+        (s) => normalizeWorkflowNodeName(s.node) === canonicalNode,
+      ) ?? output.steps?.[idx];
+    const isLegacyNode = Boolean(
+      matched?.node && LEGACY_NODE_NAME_ALIASES[matched.node],
+    );
     const explicitDeps =
       matched?.dependsOn && Array.isArray(matched.dependsOn)
-        ? matched.dependsOn.filter((dep) =>
-            (WORKFLOW_NODE_NAMES as readonly string[]).includes(dep),
-          )
+        ? matched.dependsOn
+            .map(normalizeWorkflowNodeName)
+            .filter((dep) =>
+              (WORKFLOW_NODE_NAMES as readonly string[]).includes(dep),
+            )
         : null;
     const fallbackDeps = CANONICAL_WORKFLOW_DEPENDENCIES[canonicalNode] ?? [];
+    const description = isLegacyNode
+      ? DEFAULT_STEP_DESCRIPTIONS[canonicalNode] || matched?.description || ''
+      : matched?.description || DEFAULT_STEP_DESCRIPTIONS[canonicalNode] || '';
+
     return {
       index: idx,
       node: canonicalNode,
-      description: matched?.description || '',
+      description,
       dependsOn:
         explicitDeps !== null ? [...explicitDeps] : [...fallbackDeps],
       stage: CANONICAL_STAGE_BY_NODE[canonicalNode] ?? 0,
@@ -187,7 +259,7 @@ export function getWorkflowDisplayName(record: SavedWorkflowRecord): string {
   if (trimmedCustom) {
     return trimmedCustom;
   }
-  return record.workflow.title;
+  return LEGACY_TITLE_UPGRADES[record.workflow.title] ?? record.workflow.title;
 }
 
 export function readStoredWorkflows(): SavedWorkflowRecord[] {
@@ -240,6 +312,7 @@ export function upsertStoredWorkflow(
   );
   const sanitizedWorkflow: WorkflowToolOutput = {
     ...workflow,
+    title: LEGACY_TITLE_UPGRADES[workflow.title] ?? workflow.title,
     channels:
       normalizedChannels.length > 0
         ? normalizedChannels

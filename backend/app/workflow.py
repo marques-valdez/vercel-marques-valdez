@@ -37,10 +37,10 @@ WorkflowTemplateId = Literal[
 ]
 
 WORKFLOW_TEMPLATES: Final[dict[WorkflowTemplateId, str]] = {
-    "creative-404-guard": "Creative and UTM hygiene audit",
-    "cross-channel-roas": "Cross-channel return analysis",
-    "paid-social-reallocation": "Reallocate wasted paid social spend",
-    "daily-pacing-guardrail": "Compile a daily pacing guardrail",
+    "creative-404-guard": "Audit broken ad links & UTM tags",
+    "cross-channel-roas": "Compare channel spend, pipeline & ROAS",
+    "paid-social-reallocation": "Shift wasted social spend to top search",
+    "daily-pacing-guardrail": "Daily pacing & broken-link check",
 }
 
 _TEMPLATE_ALIASES: Final[dict[str, WorkflowTemplateId]] = {
@@ -60,42 +60,42 @@ _TEMPLATE_ALIASES: Final[dict[str, WorkflowTemplateId]] = {
 
 CANONICAL_WORKFLOW_NODES: Final[tuple[tuple[str, str], ...]] = (
     (
-        "Fetch channels",
-        "Load active channel budgets and campaign metadata from Digital Twin state.",
+        "Pull active campaigns & budgets",
+        "Pull active campaigns, ad groups, and daily budget caps across your selected channels.",
     ),
     (
-        "Check creative URL status",
-        "Inspect creative destination HTTP status fields in twin state with zero external requests.",
+        "Check landing pages for broken links",
+        "Scan destination URLs across active ads to flag broken 404 landing pages wasting paid clicks.",
     ),
     (
-        "Validate UTM schema",
-        "Verify ad group UTM parameters against canonical source, medium, campaign, and content patterns.",
+        "Verify UTM tracking tags",
+        "Check utm_source, utm_medium, and utm_campaign tags so paid conversions attribute cleanly in CRM.",
     ),
     (
-        "Aggregate rows in Sandbox",
-        "Run parameterized SQLite channel aggregation inside Vercel Sandbox or badged in-process fallback.",
+        "Calculate channel spend & ROAS",
+        "Roll up trailing spend, attributed pipeline, and return on ad spend across selected channels.",
     ),
     (
-        "Threshold gate",
-        "Compare active daily spend at risk and issue counts against the configured alert threshold.",
+        "Check wasted-spend alert rule",
+        "Flag an alert whenever daily spend on broken links or untagged ads crosses your alert threshold.",
     ),
     (
-        "Digest",
-        "Render the campaign operations digest preview without sending Slack or Sheets messages.",
+        "Send morning Slack & Sheets brief",
+        "Prepare a prioritized morning brief with broken ads to pause, UTMs to fix, and channel ROAS.",
     ),
 )
 
 CANONICAL_WORKFLOW_DEPENDENCIES: Final[dict[str, tuple[str, ...]]] = {
-    "Fetch channels": (),
-    "Check creative URL status": ("Fetch channels",),
-    "Validate UTM schema": ("Fetch channels",),
-    "Aggregate rows in Sandbox": ("Fetch channels",),
-    "Threshold gate": (
-        "Check creative URL status",
-        "Validate UTM schema",
-        "Aggregate rows in Sandbox",
+    "Pull active campaigns & budgets": (),
+    "Check landing pages for broken links": ("Pull active campaigns & budgets",),
+    "Verify UTM tracking tags": ("Pull active campaigns & budgets",),
+    "Calculate channel spend & ROAS": ("Pull active campaigns & budgets",),
+    "Check wasted-spend alert rule": (
+        "Check landing pages for broken links",
+        "Verify UTM tracking tags",
+        "Calculate channel spend & ROAS",
     ),
-    "Digest": ("Threshold gate",),
+    "Send morning Slack & Sheets brief": ("Check wasted-spend alert rule",),
 }
 
 DEFAULT_WORKFLOW_TEMPLATE: Final[WorkflowTemplateId] = "daily-pacing-guardrail"
@@ -465,7 +465,7 @@ async def stream_workflow_dry_run(
                 "ms": ms0,
                 "mode": "twin",
                 "detail": (
-                    f"Loaded {len(filtered_channels)} channels, {len(filtered_campaigns)} campaigns, "
+                    f"Pulled {len(filtered_channels)} channels, {len(filtered_campaigns)} active campaigns, "
                     f"and {scoped_ad_groups} ad groups (${scoped_daily_budget:,.2f}/day budget)."
                 ),
                 "summary": {
@@ -500,8 +500,8 @@ async def stream_workflow_dry_run(
                 "ms": ms1,
                 "mode": "twin",
                 "detail": (
-                    f"Checked {len(scoped_base_ags)} creative URLs in twin state: "
-                    f"{active_broken} active 404s, {paused_broken} paused (${broken_risk:,.2f}/day at risk)."
+                    f"Checked {len(scoped_base_ags)} destination URLs: "
+                    f"{active_broken} broken 404 links active, {paused_broken} paused (${broken_risk:,.2f}/day at risk)."
                 ),
                 "summary": {
                     "checkedAdGroups": len(scoped_base_ags),
@@ -534,8 +534,8 @@ async def stream_workflow_dry_run(
                 "ms": ms2,
                 "mode": "twin",
                 "detail": (
-                    f"Validated UTM tags across {len(scoped_base_ags)} ad groups: "
-                    f"{active_utm} active violations, {fixed_utm} remediated (${utm_risk:,.2f}/day at risk)."
+                    f"Checked UTM tags across {len(scoped_base_ags)} ad groups: "
+                    f"{active_utm} tracking issues active, {fixed_utm} fixed (${utm_risk:,.2f}/day at risk)."
                 ),
                 "summary": {
                     "checkedAdGroups": len(scoped_base_ags),
@@ -573,8 +573,8 @@ async def stream_workflow_dry_run(
                 "ms": sandbox_res.sandboxMs,
                 "mode": sandbox_res.mode,
                 "detail": (
-                    f"Scanned {sandbox_res.rowsScanned:,} daily rows via {sandbox_res.mode} "
-                    f"({len(scoped_table)} channel summaries, ~{scoped_est_avoided:,} est. tokens avoided)."
+                    f"Calculated spend, pipeline, and ROAS across {len(scoped_table)} channels "
+                    f"from {sandbox_res.rowsScanned:,} daily performance records."
                 ),
                 "summary": {
                     "rowsScanned": sandbox_res.rowsScanned,
@@ -596,6 +596,7 @@ async def stream_workflow_dry_run(
         )
         gate_triggered = (risk_pct >= resolved_cfg.threshold) or (active_issue_count > 0)
         gate_outcome = "action_required" if gate_triggered else "clear"
+        gate_human_label = "alert triggered" if gate_triggered else "within threshold"
         ms4 = round((time.perf_counter() - t4) * 1000.0, 2)
         yield _format_sse_frame(
             {
@@ -605,8 +606,8 @@ async def stream_workflow_dry_run(
                 "ms": ms4,
                 "mode": "twin",
                 "detail": (
-                    f"Spend at risk is {risk_pct:.2f}% of scoped daily budget "
-                    f"(threshold {resolved_cfg.threshold}%, {active_issue_count} active issues -> {gate_outcome})."
+                    f"{risk_pct:.2f}% of daily budget is tied to broken links or UTM issues "
+                    f"(alert threshold: {resolved_cfg.threshold}%, {active_issue_count} open items — {gate_human_label})."
                 ),
                 "summary": {
                     "thresholdPct": resolved_cfg.threshold,
@@ -627,8 +628,8 @@ async def stream_workflow_dry_run(
         preview_text = (
             f"[{WORKFLOW_TEMPLATES[resolved_cfg.template]}] "
             f"Blended ROAS {derived.totals.blendedRoas:.2f}x | "
-            f"Active 404s: {active_broken} | Active UTM issues: {active_utm} | "
-            f"Spend at risk: ${active_risk:,.2f}/day | "
+            f"Broken 404 links: {active_broken} | UTM tracking issues: {active_utm} | "
+            f"Daily spend at risk: ${active_risk:,.2f}/day | "
             + " · ".join(channel_digest_parts)
         )
         ms5 = round((time.perf_counter() - t5) * 1000.0, 2)
@@ -639,7 +640,7 @@ async def stream_workflow_dry_run(
                 "status": "completed",
                 "ms": ms5,
                 "mode": "twin",
-                "detail": f"Digest preview ready (nothing sent externally): {preview_text}",
+                "detail": preview_text,
                 "summary": {
                     "previewText": preview_text,
                     "delivery": "preview-only",

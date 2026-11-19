@@ -35,20 +35,31 @@ function edgeStrokeColor(
   return '#CFCFCF';
 }
 
-function formatTimingLabel(runInfo?: DagStepRunState): string {
+function formatStepStatusLabel(runInfo?: DagStepRunState): string {
   const status = runInfo?.status ?? 'idle';
   if (status === 'running') {
-    return 'Running…';
+    return 'Checking…';
   }
   if (status === 'failed') {
-    return typeof runInfo?.ms === 'number'
-      ? `Failed · ${Math.round(runInfo.ms).toLocaleString('en-US')} ms`
-      : 'Failed';
+    return 'Needs review';
   }
-  if (typeof runInfo?.ms === 'number') {
-    return `${Math.round(runInfo.ms).toLocaleString('en-US')} ms`;
+  if (status === 'completed') {
+    return '✓ Checked';
   }
-  return 'Ready';
+  return 'Included';
+}
+
+function formatFlowOrderLabel(step: ResolvedDagStep): string {
+  if (step.stage === 0) {
+    return 'Step 1 of 6 · Runs first';
+  }
+  if (step.stage === 1) {
+    return 'Runs in parallel after Step 1';
+  }
+  if (step.stage === 2) {
+    return 'Combines link, UTM & ROAS checks (Steps 2–4)';
+  }
+  return 'Final step · Runs after alert rule check';
 }
 
 export function WorkflowDagView({
@@ -57,7 +68,7 @@ export function WorkflowDagView({
 }: WorkflowDagViewProps) {
   const steps = resolveWorkflowDagSteps(workflow);
   const [selectedNodeName, setSelectedNodeName] = useState<string>(
-    steps[0]?.node ?? 'Fetch channels',
+    steps[0]?.node ?? 'Pull active campaigns & budgets',
   );
 
   const entryStep = steps[0];
@@ -91,20 +102,11 @@ export function WorkflowDagView({
       >
         <div className="workflow-dag-node-top">
           <span className="workflow-step-index">{step.index + 1}</span>
-          <span className="workflow-dag-node-timing mono-text tabular-nums">
-            {formatTimingLabel(runInfo)}
+          <span className="workflow-dag-node-timing">
+            {formatStepStatusLabel(runInfo)}
           </span>
         </div>
         <div className="workflow-dag-node-title">{step.node}</div>
-        {runInfo?.mode === 'sandbox' ? (
-          <span className="pill channel-pill workflow-dag-badge">Vercel Sandbox</span>
-        ) : runInfo?.mode === 'in-process' ? (
-          <span className="pill channel-pill workflow-dag-badge">
-            In-process fallback
-          </span>
-        ) : step.index === 3 ? (
-          <span className="workflow-dag-subhint">SQLite rollup</span>
-        ) : null}
       </button>
     );
   };
@@ -114,19 +116,19 @@ export function WorkflowDagView({
   return (
     <div className="workflow-dag-wrapper" data-testid="workflow-dag-view">
       <div className="workflow-dag-stage-headers" aria-hidden="true">
-        <span>Stage 1 · Snapshot</span>
+        <span>1. Pull Live Ads</span>
         <span />
-        <span>Stage 2 · Parallel Checks (×3)</span>
+        <span>2. Audit Links, Tracking &amp; ROAS</span>
         <span />
-        <span>Stage 3 · Fan-In Gate</span>
+        <span>3. Spend Alert Rule</span>
         <span />
-        <span>Stage 4 · Delivery</span>
+        <span>4. Morning Brief</span>
       </div>
 
       <div
         className="workflow-dag-canvas"
         role="group"
-        aria-label={`Six-step directed acyclic graph for ${workflow.title}`}
+        aria-label={`Automated check flow for ${workflow.title}`}
       >
         {/* Stage 1: Entry */}
         <div className="workflow-dag-col workflow-dag-col-center">
@@ -149,7 +151,7 @@ export function WorkflowDagView({
             return (
               <g
                 key={`edge-1-${targetStep.node}`}
-                data-dag-edge={`${entryStep?.node ?? 'Fetch channels'}->${targetStep.node}`}
+                data-dag-edge={`${entryStep?.node ?? ''}->${targetStep.node}`}
               >
                 <path
                   d={`M 0 120 C 22 120, 24 ${targetY}, 44 ${targetY}`}
@@ -187,7 +189,7 @@ export function WorkflowDagView({
             return (
               <path
                 key={`edge-2-${sourceStep.node}`}
-                data-dag-edge={`${sourceStep.node}->${gateStep?.node ?? 'Threshold gate'}`}
+                data-dag-edge={`${sourceStep.node}->${gateStep?.node ?? ''}`}
                 d={`M 0 ${sourceY} C 24 ${sourceY}, 26 120, 44 120`}
                 fill="none"
                 stroke={stroke}
@@ -204,21 +206,16 @@ export function WorkflowDagView({
                   : 'idle',
               statusOf(gateStep?.node),
             );
-            return (
-              <polygon
-                points="48,120 41,116 41,124"
-                fill={gateStroke}
-              />
-            );
+            return <polygon points="48,120 41,116 41,124" fill={gateStroke} />;
           })()}
         </svg>
 
-        {/* Stage 3: Fan-In Threshold Gate */}
+        {/* Stage 3: Spend Alert Rule */}
         <div className="workflow-dag-col workflow-dag-col-center">
           {gateStep ? renderNodeCard(gateStep) : null}
         </div>
 
-        {/* Connector 3: Gate -> Digest */}
+        {/* Connector 3: Rule -> Brief */}
         <svg
           className="workflow-dag-connector workflow-dag-connector-short"
           viewBox="0 0 36 240"
@@ -231,9 +228,7 @@ export function WorkflowDagView({
               statusOf(digestStep?.node),
             );
             return (
-              <g
-                data-dag-edge={`${gateStep?.node ?? 'Threshold gate'}->${digestStep?.node ?? 'Digest'}`}
-              >
+              <g data-dag-edge={`${gateStep?.node ?? ''}->${digestStep?.node ?? ''}`}>
                 <line
                   x1="0"
                   y1="120"
@@ -248,7 +243,7 @@ export function WorkflowDagView({
           })()}
         </svg>
 
-        {/* Stage 4: Terminal Digest */}
+        {/* Stage 4: Morning Brief */}
         <div className="workflow-dag-col workflow-dag-col-center">
           {digestStep ? renderNodeCard(digestStep) : null}
         </div>
@@ -261,10 +256,8 @@ export function WorkflowDagView({
               <span className="workflow-step-index">{activeStep.index + 1}</span>
               <strong className="workflow-step-name">{activeStep.node}</strong>
             </div>
-            <span className="workflow-dag-deps mono-text">
-              {activeStep.dependsOn.length === 0
-                ? 'Entry step (no upstream dependencies)'
-                : `Depends on: ${activeStep.dependsOn.join(', ')}`}
+            <span className="workflow-dag-deps">
+              {formatFlowOrderLabel(activeStep)}
             </span>
           </div>
           <p className="workflow-step-desc">

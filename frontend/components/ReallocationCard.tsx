@@ -3,8 +3,6 @@
 import React, { useState } from 'react';
 import type { ReallocationToolOutput } from '@/lib/types';
 
-const DEFAULT_BLENDED_FORMULA = 'Σ(budget_i × roas_i) / Σ(budget_i)';
-
 interface ReallocationCardProps {
   state: 'skeleton' | 'completed' | 'error';
   output?: ReallocationToolOutput;
@@ -42,9 +40,9 @@ export function ReallocationCard({
       <section
         className="tool-card accent-blue"
         aria-busy="true"
-        aria-label="Drafting budget reallocation proposal"
+        aria-label="Drafting budget shift proposal"
       >
-        <div className="tool-card-eyebrow">BUDGET REALLOCATION PROPOSAL</div>
+        <div className="tool-card-eyebrow">BUDGET SHIFT PROPOSAL</div>
         <div className="skeleton-line skeleton-medium" />
         <div className="skeleton-line skeleton-wide" />
         <div className="skeleton-line skeleton-wide" />
@@ -57,9 +55,9 @@ export function ReallocationCard({
       <section className="tool-card error-card" role="alert">
         <div className="error-card-row">
           <div>
-            <div className="tool-card-eyebrow error-eyebrow">REALLOCATION TOOL ERROR</div>
+            <div className="tool-card-eyebrow error-eyebrow">PROPOSAL ERROR</div>
             <p className="error-card-body">
-              {errorText || 'Failed to compute budget reallocation proposal.'}
+              {errorText || 'Unable to draft the daily budget shift proposal.'}
             </p>
           </div>
           <button type="button" className="btn btn-secondary" onClick={onRetry}>
@@ -72,7 +70,6 @@ export function ReallocationCard({
 
   const fromLabel = output.fromCampaignName || output.fromCampaign;
   const toLabel = output.toCampaignName || output.toCampaign;
-  const formulaText = output.formula || DEFAULT_BLENDED_FORMULA;
 
   const handleApproveClick = async () => {
     setSubmitting(true);
@@ -81,7 +78,7 @@ export function ReallocationCard({
       await onApprove(output);
     } catch (err) {
       setActionError(
-        err instanceof Error ? err.message : 'Unable to apply budget reallocation.',
+        err instanceof Error ? err.message : 'Unable to apply budget shift.',
       );
     } finally {
       setSubmitting(false);
@@ -101,17 +98,19 @@ export function ReallocationCard({
     >
       <div className="tool-card-header">
         <div>
-          <div className="tool-card-eyebrow">CLIENT-HELD BUDGET APPROVAL</div>
+          <div className="tool-card-eyebrow">BUDGET SHIFT FOR APPROVAL</div>
           <h3 className="tool-card-title">
             {`Shift $${formatBudget(output.amountPerDay)}/day from ${fromLabel} to ${toLabel}`}
           </h3>
         </div>
-        <span className="pill mono-text tabular-nums">{output.proposalId}</span>
+        <span className="pill tabular-nums">
+          {`Projected ROAS: ${output.blendedRoasBefore.toFixed(2)}x → ${output.blendedRoasAfter.toFixed(2)}x`}
+        </span>
       </div>
 
       <div className="reallocation-grid tabular-nums">
         <div className="reallocation-panel">
-          <div className="panel-heading">Before shift</div>
+          <div className="panel-heading">Current daily budget</div>
           <div className="comparison-row">
             <div>
               <div className="cell-primary">{fromLabel}</div>
@@ -135,13 +134,13 @@ export function ReallocationCard({
             <strong>${formatBudget(output.before.toDailyBudget)}/day</strong>
           </div>
           <div className="comparison-row comparison-total">
-            <span>Blended return on ad spend</span>
+            <span>Portfolio blended ROAS</span>
             <strong>{output.blendedRoasBefore.toFixed(2)}x</strong>
           </div>
         </div>
 
         <div className="reallocation-panel reallocation-panel-after">
-          <div className="panel-heading">After shift (preview)</div>
+          <div className="panel-heading">Proposed daily budget</div>
           <div className="comparison-row">
             <div>
               <div className="cell-primary">{fromLabel}</div>
@@ -165,18 +164,19 @@ export function ReallocationCard({
             <strong>${formatBudget(output.after.toDailyBudget)}/day</strong>
           </div>
           <div className="comparison-row comparison-total">
-            <span>Blended return on ad spend</span>
+            <span>Projected blended ROAS</span>
             <strong>{output.blendedRoasAfter.toFixed(2)}x</strong>
           </div>
         </div>
       </div>
 
       <details className="technical-drawer">
-        <summary>Blended return formula</summary>
+        <summary>How projected ROAS is calculated</summary>
         <div className="formula-drawer-body">
-          <code className="mono-text">{formulaText}</code>
           <p className="drawer-caption">
-            Weighted across all active campaigns before and after shifting ${formatBudget(output.amountPerDay)}/day while keeping total daily budget at ${formatBudget(output.before.totalDailyBudget)}/day.
+            Projected blended ROAS weights each active campaign&apos;s historical return by
+            its updated daily budget while keeping your total daily budget unchanged at $
+            {formatBudget(output.before.totalDailyBudget)}/day.
           </p>
         </div>
       </details>
@@ -190,7 +190,7 @@ export function ReallocationCard({
       <div className="tool-card-footer">
         {decision === 'approved' ? (
           <span className="pill badge-green" data-testid="reallocation-decision-pill">
-            Approved · mutation saved in browser
+            Approved · daily budgets updated
           </span>
         ) : decision === 'declined' ? (
           <span className="pill" data-testid="reallocation-decision-pill">
@@ -205,7 +205,7 @@ export function ReallocationCard({
               onClick={() => void handleApproveClick()}
               data-testid="reallocation-approve-button"
             >
-              Approve
+              Approve budget shift
             </button>
             <button
               type="button"

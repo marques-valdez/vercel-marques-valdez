@@ -30,12 +30,12 @@ export function ChannelHealthStrip({
     return (
       <section
         className="error-card"
-        aria-label="Channel health error"
+        aria-label="Channel summary error"
         role="alert"
       >
         <div className="error-card-row">
           <div>
-            <strong className="error-card-title">Unable to load Digital Twin state</strong>
+            <strong className="error-card-title">Unable to load campaign summary</strong>
             <p className="error-card-body">{errorText}</p>
           </div>
           <div className="card-actions-inline">
@@ -43,7 +43,7 @@ export function ChannelHealthStrip({
               Retry
             </button>
             <button type="button" className="btn btn-secondary" onClick={onReset}>
-              Reset demo
+              Reset workspace
             </button>
           </div>
         </div>
@@ -55,7 +55,7 @@ export function ChannelHealthStrip({
     return (
       <section
         className="health-strip"
-        aria-label="Channel health loading"
+        aria-label="Channel summary loading"
         data-testid="channel-health-strip"
       >
         {['channel-a', 'channel-b', 'channel-c', 'totals'].map((slot) => (
@@ -75,7 +75,7 @@ export function ChannelHealthStrip({
   return (
     <section
       className="health-strip"
-      aria-label="Channel health summary"
+      aria-label="Paid media channel summary"
       data-testid="channel-health-strip"
     >
       {channels.map((ch) => {
@@ -101,10 +101,10 @@ export function ChannelHealthStrip({
               </span>
             </div>
             <div className="health-metrics tabular-nums">
-              <span>{`${ch.campaignCount.toLocaleString('en-US')} campaigns`}</span>
+              <span>{`${ch.roas.toFixed(2)}x ROAS`}</span>
               <span aria-hidden="true">·</span>
               <span className={ch.brokenCreatives > 0 ? 'status-text-danger' : 'status-text-ok'}>
-                {`${ch.brokenCreatives.toLocaleString('en-US')} broken URLs`}
+                {`${ch.brokenCreatives.toLocaleString('en-US')} broken links`}
               </span>
               <span aria-hidden="true">·</span>
               <span className={hasIssues && ch.utmViolations > 0 ? 'status-text-warn' : 'status-text-ok'}>
@@ -113,7 +113,7 @@ export function ChannelHealthStrip({
             </div>
             {hasBudgetDelta || hasHygieneDelta ? (
               <div
-                className="health-delta-row tabular-nums mono-text"
+                className="health-delta-row tabular-nums"
                 data-testid={`channel-delta-${ch.channelId}`}
               >
                 {hasBudgetDelta && delta ? (
@@ -129,12 +129,12 @@ export function ChannelHealthStrip({
                 ) : null}
                 {delta && delta.brokenCreativesDelta < 0 ? (
                   <span className="delta-pill delta-pill-positive">
-                    URLs remediated
+                    Broken ads paused
                   </span>
                 ) : null}
                 {delta && delta.utmViolationsDelta < 0 ? (
                   <span className="delta-pill delta-pill-positive">
-                    UTMs normalized
+                    UTMs fixed
                   </span>
                 ) : null}
               </div>
@@ -145,15 +145,15 @@ export function ChannelHealthStrip({
 
       <article className="health-item" data-channel-id="dataset_totals">
         <div className="health-item-header">
-          <span className="health-channel-name">Performance dataset</span>
+          <span className="health-channel-name">All Paid Channels</span>
           <span className="health-budget tabular-nums">
             {`$${formatBudgetAmount(totals.dailyBudget)}/day`}
           </span>
         </div>
         <div className="health-metrics tabular-nums">
-          <span>{`${totals.rowCount.toLocaleString('en-US')} daily rows`}</span>
+          <span>{`${totals.blendedRoas.toFixed(2)}x blended ROAS`}</span>
           <span aria-hidden="true">·</span>
-          <span>{`about $${monthlyK.toLocaleString('en-US')}K per month`}</span>
+          <span>{`~$${monthlyK.toLocaleString('en-US')}K/mo budget`}</span>
         </div>
       </article>
     </section>

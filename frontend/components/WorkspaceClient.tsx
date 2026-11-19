@@ -7,14 +7,10 @@ import { ChannelHealthStrip } from './ChannelHealthStrip';
 import { Composer } from './Composer';
 import { HeaderBar } from './HeaderBar';
 import { HygieneCard } from './HygieneCard';
-import { InspectorDrawer } from './InspectorDrawer';
 import { PlaybookGrid } from './PlaybookGrid';
-import { ProtocolXRay } from './ProtocolXRay';
 import { ReallocationCard } from './ReallocationCard';
 import { SandboxCard } from './SandboxCard';
 import { ShareModal } from './ShareModal';
-import { TelemetryStrip } from './TelemetryStrip';
-import { VercelArchitectureStrip } from './VercelArchitectureStrip';
 import { WorkflowCard } from './WorkflowCard';
 import { WorkflowsDrawer } from './WorkflowsDrawer';
 import { MarkdownText } from './MarkdownText';
@@ -36,7 +32,6 @@ import {
 import type {
   ChannelDelta,
   DerivedTwinState,
-  HealthStatus,
   HygieneToolOutput,
   PlaybookDefinition,
   PlaybookId,
@@ -46,8 +41,6 @@ import type {
   SandboxStatusData,
   SandboxToolOutput,
   SavedWorkflowRecord,
-  TelemetryData,
-  WireFrameRecord,
   WorkflowToolOutput,
 } from '@/lib/types';
 
@@ -85,7 +78,7 @@ function computeChannelDeltas(
 
 interface WorkspaceClientProps {
   initialRemix: ResolvedPlaybook | null;
-  uiStreamSource: string;
+  uiStreamSource?: string;
 }
 
 function mapToolStateToCardState(
@@ -100,16 +93,10 @@ function mapToolStateToCardState(
   return 'skeleton';
 }
 
-export function WorkspaceClient({
-  initialRemix,
-  uiStreamSource,
-}: WorkspaceClientProps) {
+export function WorkspaceClient({ initialRemix }: WorkspaceClientProps) {
   const [twinState, setTwinState] = useState<DerivedTwinState | null>(null);
   const [channelDeltas, setChannelDeltas] = useState<Record<string, ChannelDelta>>({});
   const [twinError, setTwinError] = useState<string | null>(null);
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [healthPingMs, setHealthPingMs] = useState<number | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
 
   const [input, setInput] = useState<string>(() => initialRemix?.prompt ?? '');
   const [highlightedPlaybookId, setHighlightedPlaybookId] =
@@ -118,19 +105,9 @@ export function WorkspaceClient({
     () => initialRemix?.tierHint ?? null,
   );
 
-  const [injectFailure, setInjectFailure] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [inspectorInitialTab, setInspectorInitialTab] = useState<
-    'all' | 'adapter' | 'deployment'
-  >('all');
   const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflowRecord[]>([]);
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
-  const [wireFramesByTurn, setWireFramesByTurn] = useState<
-    Record<string, WireFrameRecord[]>
-  >({});
-  const [wireFramesByOrder, setWireFramesByOrder] = useState<WireFrameRecord[][]>([]);
-  const [autoOpenXRayKey, setAutoOpenXRayKey] = useState<string | null>(null);
   const [shareSlug, setShareSlug] = useState<string>(
     () => initialRemix?.slug ?? 'creative-404-guard',
   );
@@ -139,12 +116,8 @@ export function WorkspaceClient({
     Record<string, 'approved' | 'declined'>
   >({});
 
-  const injectFailureRef = useRef(injectFailure);
-  injectFailureRef.current = injectFailure;
   const twinStateRef = useRef<DerivedTwinState | null>(twinState);
   twinStateRef.current = twinState;
-  const turnCaptureCounterRef = useRef(0);
-  const autoOpenNextXRayRef = useRef(false);
   const seenWorkflowCallIdsRef = useRef<Set<string>>(new Set());
 
   const lastTierHintRef = useRef<'fast' | 'reasoning' | null>(
@@ -162,158 +135,20 @@ export function WorkspaceClient({
       setTwinError(
         err instanceof Error
           ? err.message
-          : 'Failed to load Digital Twin state from Python service.',
+          : 'Unable to load campaign workspace.',
       );
-    }
-  }, []);
-
-  const loadHealth = useCallback(async () => {
-    setHealthLoading(true);
-    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    try {
-      const response = await fetch('/api/agent/health', { cache: 'no-store' });
-      const elapsed = Math.max(
-        1,
-        Math.round(
-          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0,
-        ),
-      );
-      if (response.ok) {
-        const data = (await response.json()) as HealthStatus;
-        setHealth(data);
-        setHealthPingMs(elapsed);
-      }
-    } catch {
-      // Keep health null so Inspector shows graceful unavailable state
-    } finally {
-      setHealthLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void loadTwin();
-    void loadHealth();
     setSavedWorkflows(readStoredWorkflows());
-  }, [loadTwin, loadHealth]);
+  }, [loadTwin]);
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport<RelayUIMessage>({
         api: '/api/agent/chat',
-        fetch: async (inputUrl, init) => {
-          const response = await globalThis.fetch(inputUrl, init);
-          const contentType = response.headers.get('content-type') || '';
-          if (!response.body || !contentType.toLowerCase().includes('text/event-stream')) {
-            return response;
-          }
-          const [sdkStream, tapStream] = response.body.tee();
-          const captureOrderIdx = turnCaptureCounterRef.current;
-          turnCaptureCounterRef.current += 1;
-          const startedAt =
-            typeof performance !== 'undefined' ? performance.now() : Date.now();
-
-          void (async () => {
-            const reader = tapStream.getReader();
-            const decoder = new TextDecoder('utf-8');
-            let buffer = '';
-            let messageIdKey: string | null = null;
-            const collected: WireFrameRecord[] = [];
-            let frameSeq = 0;
-
-            const pushFrame = (rawData: string) => {
-              const now =
-                typeof performance !== 'undefined' ? performance.now() : Date.now();
-              const offsetMs = Math.max(0, Math.round(now - startedAt));
-              let frameType = rawData === '[DONE]' ? '[DONE]' : 'data';
-              let parsedObj: Record<string, unknown> | null = null;
-              if (rawData !== '[DONE]') {
-                try {
-                  const candidate = JSON.parse(rawData) as unknown;
-                  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-                    parsedObj = candidate as Record<string, unknown>;
-                    if (typeof parsedObj.type === 'string') {
-                      frameType = parsedObj.type;
-                    }
-                    if (
-                      frameType === 'start' &&
-                      typeof parsedObj.messageId === 'string' &&
-                      parsedObj.messageId
-                    ) {
-                      messageIdKey = parsedObj.messageId;
-                    }
-                  }
-                } catch {
-                  // Preserve raw frame text even if non-JSON
-                }
-              }
-              frameSeq += 1;
-              collected.push({
-                id: `${captureOrderIdx}-${frameSeq}`,
-                offsetMs,
-                type: frameType,
-                raw: rawData,
-                payload: parsedObj,
-              });
-            };
-
-            try {
-              while (true) {
-                const { value, done } = await reader.read();
-                buffer += value
-                  ? decoder.decode(value, { stream: !done })
-                  : decoder.decode();
-                buffer = buffer.replace(/\r\n/g, '\n');
-
-                let boundary = buffer.indexOf('\n\n');
-                while (boundary !== -1) {
-                  const block = buffer.slice(0, boundary);
-                  buffer = buffer.slice(boundary + 2);
-                  const dataPayload = block
-                    .split('\n')
-                    .filter((line) => line.startsWith('data:'))
-                    .map((line) => line.slice(5).trimStart())
-                    .join('\n')
-                    .trim();
-                  if (dataPayload) {
-                    pushFrame(dataPayload);
-                  }
-                  boundary = buffer.indexOf('\n\n');
-                }
-                if (done) {
-                  break;
-                }
-              }
-            } catch {
-              // Ignore aborted stream taps
-            } finally {
-              if (collected.length > 0) {
-                const snapshot = [...collected];
-                setWireFramesByOrder((prev) => {
-                  const next = [...prev];
-                  next[captureOrderIdx] = snapshot;
-                  return next;
-                });
-                if (messageIdKey) {
-                  const resolvedKey = messageIdKey;
-                  setWireFramesByTurn((prev) => ({
-                    ...prev,
-                    [resolvedKey]: snapshot,
-                  }));
-                  if (autoOpenNextXRayRef.current) {
-                    autoOpenNextXRayRef.current = false;
-                    setAutoOpenXRayKey(resolvedKey);
-                  }
-                }
-              }
-            }
-          })();
-
-          return new Response(sdkStream, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers,
-          });
-        },
         prepareSendMessagesRequest: ({ id, messages, trigger, body }) => {
           const perCallBody = (body ?? {}) as Record<string, unknown>;
           const resolvedTierHint =
@@ -337,7 +172,7 @@ export function WorkspaceClient({
               trigger,
               messages: bounded,
               twinMutations: readStoredMutations(),
-              injectFailure: injectFailureRef.current,
+              injectFailure: false,
               ...perCallBody,
               tierHint: resolvedTierHint ?? null,
             },
@@ -404,48 +239,6 @@ export function WorkspaceClient({
     }
   }, [messages]);
 
-  const allTelemetryEntries = useMemo(() => {
-    const entries: TelemetryData[] = [];
-    for (const msg of messages) {
-      if (msg.role !== 'assistant') {
-        continue;
-      }
-      for (const part of msg.parts) {
-        if (part.type === 'data-telemetry') {
-          entries.push(part.data);
-        }
-      }
-    }
-    return entries;
-  }, [messages]);
-
-  const totalTokensAvoided = useMemo(() => {
-    let total = 0;
-    for (const msg of messages) {
-      if (msg.role !== 'assistant') {
-        continue;
-      }
-      for (const part of msg.parts) {
-        if (
-          part.type === 'tool-analyze_in_sandbox' &&
-          part.state === 'output-available' &&
-          part.output
-        ) {
-          total += part.output.estTokensAvoided || 0;
-        } else if (
-          part.type === 'dynamic-tool' &&
-          part.toolName === 'analyze_in_sandbox' &&
-          part.state === 'output-available' &&
-          part.output
-        ) {
-          const out = part.output as SandboxToolOutput;
-          total += out.estTokensAvoided || 0;
-        }
-      }
-    }
-    return total;
-  }, [messages]);
-
   const handleSelectPlaybook = useCallback(
     (playbook: PlaybookDefinition) => {
       if (isStreaming) {
@@ -464,7 +257,7 @@ export function WorkspaceClient({
           body: {
             tierHint: playbook.tierHint,
             twinMutations: readStoredMutations(),
-            injectFailure: injectFailureRef.current,
+            injectFailure: false,
           },
         },
       );
@@ -499,7 +292,7 @@ export function WorkspaceClient({
         body: {
           tierHint: activeTierHint,
           twinMutations: readStoredMutations(),
-          injectFailure: injectFailureRef.current,
+          injectFailure: false,
         },
       },
     );
@@ -513,7 +306,7 @@ export function WorkspaceClient({
         body: {
           tierHint: lastTierHintRef.current,
           twinMutations: readStoredMutations(),
-          injectFailure: injectFailureRef.current,
+          injectFailure: false,
         },
       });
       return;
@@ -525,7 +318,7 @@ export function WorkspaceClient({
           body: {
             tierHint: lastTierHintRef.current,
             twinMutations: readStoredMutations(),
-            injectFailure: injectFailureRef.current,
+            injectFailure: false,
           },
         },
       );
@@ -560,7 +353,7 @@ export function WorkspaceClient({
         [decisionKey]: 'approved',
       }));
       clearError();
-      const approvalText = `Approved proposal ${proposal.proposalId}.`;
+      const approvalText = `Approved budget shift from ${proposal.fromCampaignName || proposal.fromCampaign} to ${proposal.toCampaignName || proposal.toCampaign}.`;
       lastTierHintRef.current = 'reasoning';
       lastUserPromptRef.current = approvalText;
       void sendMessage(
@@ -569,7 +362,7 @@ export function WorkspaceClient({
           body: {
             tierHint: 'reasoning',
             twinMutations: mutations,
-            injectFailure: injectFailureRef.current,
+            injectFailure: false,
           },
         },
       );
@@ -584,7 +377,7 @@ export function WorkspaceClient({
         [decisionKey]: 'declined',
       }));
       clearError();
-      const declineText = `Declined proposal ${proposal.proposalId}.`;
+      const declineText = `Declined budget shift for ${proposal.fromCampaignName || proposal.fromCampaign}.`;
       lastTierHintRef.current = 'reasoning';
       lastUserPromptRef.current = declineText;
       void sendMessage(
@@ -593,7 +386,7 @@ export function WorkspaceClient({
           body: {
             tierHint: 'reasoning',
             twinMutations: readStoredMutations(),
-            injectFailure: injectFailureRef.current,
+            injectFailure: false,
           },
         },
       );
@@ -608,12 +401,7 @@ export function WorkspaceClient({
     clearError();
     setMessages([]);
     setProposalDecisions({});
-    setInjectFailure(false);
     setChannelDeltas({});
-    setWireFramesByTurn({});
-    setWireFramesByOrder([]);
-    setAutoOpenXRayKey(null);
-    turnCaptureCounterRef.current = 0;
     seenWorkflowCallIdsRef.current.clear();
     clearStoredWorkflows();
     setSavedWorkflows([]);
@@ -628,7 +416,7 @@ export function WorkspaceClient({
       setTwinState(freshState);
     } catch (err) {
       setTwinError(
-        err instanceof Error ? err.message : 'Unable to reset Digital Twin state.',
+        err instanceof Error ? err.message : 'Unable to reset campaign workspace.',
       );
     }
   }, [clearError, setMessages, stop]);
@@ -639,7 +427,6 @@ export function WorkspaceClient({
   }, []);
 
   const handleOpenWorkflowInDrawer = useCallback((workflowId: string) => {
-    setInspectorOpen(false);
     setSelectedWorkflowId(workflowId);
     setWorkflowsOpen(true);
   }, []);
@@ -662,58 +449,6 @@ export function WorkspaceClient({
       handleSelectPlaybook(pb);
     }
   }, [handleSelectPlaybook]);
-
-  const handleOpenInspectorTab = useCallback(
-    (tab: 'all' | 'adapter' | 'deployment') => {
-      setWorkflowsOpen(false);
-      setInspectorInitialTab(tab);
-      setInspectorOpen(true);
-    },
-    [],
-  );
-
-  const handleRunDemoStep = useCallback(
-    (step: 'sandbox' | 'xray' | 'failover' | 'og') => {
-      if (step === 'og') {
-        setShareModalOpen(true);
-        return;
-      }
-      if (isStreaming) {
-        return;
-      }
-      if (step === 'sandbox') {
-        const pb = PLAYBOOKS.find((p) => p.id === 'cross-channel-roas');
-        if (pb) {
-          handleSelectPlaybook(pb);
-        }
-        return;
-      }
-      if (step === 'xray') {
-        const latestAssistant = [...messages]
-          .reverse()
-          .find((m) => m.role === 'assistant');
-        if (latestAssistant && wireFramesByTurn[latestAssistant.id]?.length) {
-          setAutoOpenXRayKey(latestAssistant.id);
-          return;
-        }
-        autoOpenNextXRayRef.current = true;
-        const pb = PLAYBOOKS.find((p) => p.id === 'creative-404-guard');
-        if (pb) {
-          handleSelectPlaybook(pb);
-        }
-        return;
-      }
-      if (step === 'failover') {
-        injectFailureRef.current = true;
-        setInjectFailure(true);
-        const pb = PLAYBOOKS.find((p) => p.id === 'paid-social-reallocation');
-        if (pb) {
-          handleSelectPlaybook(pb);
-        }
-      }
-    },
-    [handleSelectPlaybook, isStreaming, messages, wireFramesByTurn],
-  );
 
   const renderMessagePart = (
     part: RelayUIMessage['parts'][number],
@@ -915,34 +650,14 @@ export function WorkspaceClient({
     <div className="workspace-page">
       <HeaderBar
         twinState={twinState}
-        telemetryEntries={allTelemetryEntries}
-        inspectorOpen={inspectorOpen}
         workflowCount={savedWorkflows.length}
         workflowsOpen={workflowsOpen}
         onOpenShare={() => setShareModalOpen(true)}
-        onToggleWorkflows={() => {
-          setInspectorOpen(false);
-          setWorkflowsOpen((prev) => !prev);
-        }}
-        onToggleInspector={() => {
-          setWorkflowsOpen(false);
-          setInspectorOpen((prev) => !prev);
-        }}
+        onToggleWorkflows={() => setWorkflowsOpen((prev) => !prev)}
+        onResetWorkspace={() => void handleResetDemo()}
       />
 
       <main className="workspace-main">
-        <VercelArchitectureStrip
-          health={health}
-          healthPingMs={healthPingMs}
-          injectFailure={injectFailure}
-          isStreaming={isStreaming}
-          onToggleInjectFailure={setInjectFailure}
-          onRunDemoStep={handleRunDemoStep}
-          onOpenInspector={(tab) =>
-            handleOpenInspectorTab(tab === 'runtime' ? 'all' : tab)
-          }
-        />
-
         <ChannelHealthStrip
           twinState={twinState}
           errorText={twinError}
@@ -960,104 +675,71 @@ export function WorkspaceClient({
         ) : (
           <section
             className="conversation-stream"
-            aria-label="Agent conversation"
+            aria-label="Campaign assistant conversation"
             data-testid="conversation-stream"
           >
-            {(() => {
-              let assistantOrdinal = -1;
-              return messages.map((message) => {
-                if (message.role === 'user') {
-                  const userText = message.parts
-                    .filter(
-                      (p): p is Extract<RelayUIMessage['parts'][number], { type: 'text' }> =>
-                        p.type === 'text',
-                    )
-                    .map((p) => p.text)
-                    .join('\n')
-                    .trim();
-
-                  if (!userText) {
-                    return null;
-                  }
-
-                  return (
-                    <article
-                      key={message.id}
-                      className="message-turn message-user"
-                      data-message-role="user"
-                    >
-                      <div className="user-bubble">{userText}</div>
-                    </article>
-                  );
-                }
-
-                assistantOrdinal += 1;
-                const turnTelemetry = message.parts
+            {messages.map((message) => {
+              if (message.role === 'user') {
+                const userText = message.parts
                   .filter(
-                    (
-                      p,
-                    ): p is Extract<
-                      RelayUIMessage['parts'][number],
-                      { type: 'data-telemetry' }
-                    > => p.type === 'data-telemetry',
+                    (p): p is Extract<RelayUIMessage['parts'][number], { type: 'text' }> =>
+                      p.type === 'text',
                   )
-                  .map((p) => p.data);
+                  .map((p) => p.text)
+                  .join('\n')
+                  .trim();
 
-                const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
-                for (const part of message.parts) {
-                  if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
-                    sandboxStatusByCallId[part.data.toolCallId] = part.data;
-                  }
-                }
-
-                const renderedParts = message.parts
-                  .map((part, idx) =>
-                    renderMessagePart(part, idx, sandboxStatusByCallId),
-                  )
-                  .filter((node) => node !== null);
-
-                const turnWireFrames =
-                  wireFramesByTurn[message.id] ??
-                  wireFramesByOrder[assistantOrdinal] ??
-                  [];
-
-                if (
-                  turnTelemetry.length === 0 &&
-                  renderedParts.length === 0 &&
-                  !isStreaming
-                ) {
+                if (!userText) {
                   return null;
                 }
 
                 return (
                   <article
                     key={message.id}
-                    className="message-turn message-assistant"
-                    data-message-role="assistant"
+                    className="message-turn message-user"
+                    data-message-role="user"
                   >
-                    <TelemetryStrip
-                      entries={turnTelemetry}
-                      onOpenFinOps={() => handleOpenInspectorTab('all')}
-                    />
-                    {turnWireFrames.length > 0 ? (
-                      <ProtocolXRay
-                        key={`${message.id}-${autoOpenXRayKey === message.id ? 'open' : 'closed'}`}
-                        frames={turnWireFrames}
-                        uiStreamSource={uiStreamSource}
-                        defaultOpen={autoOpenXRayKey === message.id}
-                      />
-                    ) : null}
-                    {renderedParts.length > 0 ? (
-                      <div className="assistant-parts-stack">{renderedParts}</div>
-                    ) : isStreaming ? (
-                      <div className="assistant-streaming-placeholder" aria-live="polite">
-                        Streaming response from Python FastAPI + LangGraph service…
-                      </div>
-                    ) : null}
+                    <div className="user-bubble">{userText}</div>
                   </article>
                 );
-              });
-            })()}
+              }
+
+              const sandboxStatusByCallId: Record<string, SandboxStatusData> = {};
+              for (const part of message.parts) {
+                if (part.type === 'data-sandbox-status' && part.data?.toolCallId) {
+                  sandboxStatusByCallId[part.data.toolCallId] = part.data;
+                }
+              }
+
+              const renderedParts = message.parts
+                .map((part, idx) =>
+                  renderMessagePart(part, idx, sandboxStatusByCallId),
+                )
+                .filter((node) => node !== null);
+
+              if (renderedParts.length === 0 && !isStreaming) {
+                return null;
+              }
+
+              return (
+                <article
+                  key={message.id}
+                  className="message-turn message-assistant"
+                  data-message-role="assistant"
+                >
+                  {renderedParts.length > 0 ? (
+                    <div className="assistant-parts-stack">{renderedParts}</div>
+                  ) : isStreaming ? (
+                    <div
+                      className="assistant-streaming-placeholder"
+                      aria-live="polite"
+                    >
+                      Reviewing your active campaigns…
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
           </section>
         )}
 
@@ -1065,14 +747,16 @@ export function WorkspaceClient({
           <section
             className={`error-card${isMissingCredentialError ? ' setup-card' : ''}`}
             role="alert"
-            data-testid={isMissingCredentialError ? 'setup-error-card' : 'stream-error-card'}
+            data-testid={
+              isMissingCredentialError ? 'setup-error-card' : 'stream-error-card'
+            }
           >
             <div className="error-card-row">
               <div>
                 <div className="tool-card-eyebrow error-eyebrow">
                   {isMissingCredentialError
-                    ? 'AI GATEWAY CREDENTIAL SETUP REQUIRED'
-                    : 'AGENT STREAM ERROR'}
+                    ? 'SETUP REQUIRED'
+                    : 'CONNECTION ERROR'}
                 </div>
                 <p className="error-card-body">{error.message}</p>
               </div>
@@ -1093,8 +777,6 @@ export function WorkspaceClient({
         value={input}
         isStreaming={isStreaming}
         primedTierHint={primedTierHint}
-        health={health}
-        injectFailure={injectFailure}
         onChange={handleComposerChange}
         onSubmit={handleComposerSubmit}
         onStop={() => void stop()}
@@ -1116,22 +798,6 @@ export function WorkspaceClient({
         onShareWorkflow={handleOpenWorkflowShare}
         onCompileSample={handleCompileSampleWorkflow}
         onClose={() => setWorkflowsOpen(false)}
-      />
-
-      <InspectorDrawer
-        isOpen={inspectorOpen}
-        initialTab={inspectorInitialTab}
-        injectFailure={injectFailure}
-        telemetryEntries={allTelemetryEntries}
-        totalTokensAvoided={totalTokensAvoided}
-        messages={messages}
-        uiStreamSource={uiStreamSource}
-        health={health}
-        healthLoading={healthLoading}
-        onClose={() => setInspectorOpen(false)}
-        onToggleInjectFailure={setInjectFailure}
-        onRefreshHealth={() => void loadHealth()}
-        onResetDemo={handleResetDemo}
       />
     </div>
   );

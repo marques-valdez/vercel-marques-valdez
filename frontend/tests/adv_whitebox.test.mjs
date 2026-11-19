@@ -387,11 +387,11 @@ test('adv_sandbox_card_format_pct_before_spend_and_edge_cells formats spend_delt
       onRetry: () => {},
     }),
   );
-  assert.equal(liveHtml.includes('Vercel Sandbox'), true);
+  assert.equal(liveHtml.includes('2,500 daily records'), true);
+  assert.equal(liveHtml.includes('Vercel Sandbox'), false);
   assert.equal(liveHtml.includes('-18.42%'), true);
   assert.equal(liveHtml.includes('$-18.42'), false);
   assert.equal(liveHtml.includes('$680'), true);
-  assert.equal(liveHtml.includes('<details class="technical-drawer">'), true);
 
   assert.equal(typeof formatCellValue, 'function');
   assert.equal(formatCellValue('spend_delta_pct', -18.42), '-18.42%');
@@ -950,9 +950,8 @@ test('adv_workflow_card_sse_chunking_failed_step_abort_and_dup_channels verifies
 
     const afterRun = mounted.rerender();
     assert.equal(afterRun.html.includes('Operator digest body'), true);
-    assert.equal(afterRun.html.includes('In-process fallback'), true);
     assert.equal(afterRun.html.includes('workflow-step-failed'), true);
-    assert.equal(afterRun.html.includes('Failed · 16 ms'), true);
+    assert.equal(afterRun.html.includes('Needs review'), true);
 
     globalThis.fetch = async () =>
       new Response(
@@ -1069,8 +1068,11 @@ test('adv_tool_cards_telemetry_header_channel_strip_share_modal_and_inspector_le
       onRetry: () => {},
     }),
   );
-  assert.equal(remediatedHtml.includes('>Applied<'), true);
-  assert.equal(remediatedHtml.includes('No active broken creative URLs'), true);
+  assert.equal(remediatedHtml.includes('>Fixes applied<'), true);
+  assert.equal(
+    remediatedHtml.includes('All active landing pages and UTM tracking tags look healthy.'),
+    true,
+  );
 
   const hygMount = mountServerHarness(HygieneCard, {
     state: 'completed',
@@ -1093,7 +1095,7 @@ test('adv_tool_cards_telemetry_header_channel_strip_share_modal_and_inspector_le
   await flushAsyncWork(10);
   const hygAfterErr = hygMount.rerender();
   assert.equal(hygAfterErr.html.includes('Mutation log cap (50) reached.'), true);
-  assert.equal(hygAfterErr.html.includes('>Applied<'), false);
+  assert.equal(hygAfterErr.html.includes('>Fixes applied<'), false);
 
   const reallocMount = mountServerHarness(ReallocationCard, {
     state: 'completed',
@@ -1237,39 +1239,26 @@ test('adv_tool_cards_telemetry_header_channel_strip_share_modal_and_inspector_le
   const coldHeaderHtml = ReactDOMServer.renderToStaticMarkup(
     React.createElement(HeaderBar, {
       twinState: null,
-      telemetryEntries: [],
-      inspectorOpen: false,
       onOpenShare: () => {},
-      onToggleInspector: () => {},
     }),
   );
-  assert.equal(coldHeaderHtml.includes('Session: $0.00'), true);
-  assert.equal(coldHeaderHtml.includes('Loading dataset…'), true);
+  assert.equal(coldHeaderHtml.includes('Loading campaigns…'), true);
+  assert.equal(coldHeaderHtml.includes('Workflows'), true);
 
-  const clampedHeaderHtml = ReactDOMServer.renderToStaticMarkup(
+  const populatedHeaderHtml = ReactDOMServer.renderToStaticMarkup(
     React.createElement(HeaderBar, {
       twinState: twinZeroIssues,
-      telemetryEntries: [
-        {
-          tier: 'reasoning',
-          routedBy: 'card',
-          primaryModel: 'anthropic/claude-sonnet-5.5',
-          servedModel: 'google/gemini-3.1-pro-preview',
-          failover: 'gateway',
-          inputTokens: 1000,
-          cachedTokens: 0,
-          outputTokens: 500,
-          costUsd: 0.025,
-          baselineCostUsd: 0.02,
-          latencyMs: 600,
-        },
-      ],
-      inspectorOpen: true,
+      workflowCount: 1,
       onOpenShare: () => {},
-      onToggleInspector: () => {},
+      onResetWorkspace: () => {},
     }),
   );
-  assert.equal(clampedHeaderHtml.includes('Session: $0.03 · 0% less'), true);
+  assert.equal(
+    populatedHeaderHtml.includes('2 active campaigns · $950/day'),
+    true,
+  );
+  assert.equal(populatedHeaderHtml.includes('Reset changes'), true);
+  assert.equal(populatedHeaderHtml.includes('Workflows (1)'), true);
 
   const stripErrHtml = ReactDOMServer.renderToStaticMarkup(
     React.createElement(ChannelHealthStrip, {
@@ -1522,7 +1511,7 @@ test('adv_routes_og_share_page_workspace_page_and_playbook_grid covers App Route
   const validMeta = await sharePageMod.generateMetadata({
     params: Promise.resolve({ slug: 'creative-404-guard' }),
   });
-  assert.ok(String(validMeta.title).includes('Creative and UTM hygiene audit'));
+  assert.ok(String(validMeta.title).includes('Audit broken ad links & UTM tags'));
   assert.equal(
     validMeta.openGraph.images[0].url,
     '/api/og?slug=creative-404-guard',

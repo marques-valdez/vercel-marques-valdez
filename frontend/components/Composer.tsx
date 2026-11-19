@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { previewGatewayRoute } from '@/lib/gateway-preview';
 import type { HealthStatus } from '@/lib/types';
 
 export const MAX_INPUT_CHARS = 2000;
@@ -41,9 +40,6 @@ interface ComposerProps {
 export function Composer({
   value,
   isStreaming,
-  primedTierHint = null,
-  health = null,
-  injectFailure = false,
   onChange,
   onSubmit,
   onStop,
@@ -63,13 +59,6 @@ export function Composer({
 
   const trimmedLength = value.trim().length;
   const canSend = !isStreaming && trimmedLength > 0 && value.length <= MAX_INPUT_CHARS;
-  const routePreview = previewGatewayRoute(value, primedTierHint, health);
-  const routeReason =
-    routePreview.routedBy === 'card'
-      ? 'card hint'
-      : routePreview.matchedKeyword
-        ? `keyword "${routePreview.matchedKeyword}"`
-        : 'default fast';
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (
@@ -95,7 +84,7 @@ export function Composer({
     <div className="composer-shell">
       <form className="composer-form" onSubmit={handleFormSubmit}>
         <label htmlFor="relay-composer-input" className="sr-only">
-          Ask Relay to audit campaigns, run SQL in Sandbox, propose a budget shift, or compile a workflow
+          Ask Relay about paid campaigns, landing page links, UTM tracking, ROAS, budget shifts, or recurring checks
         </label>
         <textarea
           ref={textareaRef}
@@ -105,35 +94,16 @@ export function Composer({
           maxLength={MAX_INPUT_CHARS}
           disabled={isStreaming}
           value={value}
-          onChange={(e) => onChange(sanitizeComposerInput(e.target.value, MAX_INPUT_CHARS))}
+          onChange={(e) =>
+            onChange(sanitizeComposerInput(e.target.value, MAX_INPUT_CHARS))
+          }
           onKeyDown={handleKeyDown}
-          placeholder="Ask Relay about creative 404s, UTM tags, channel return on ad spend, budget shifts, or daily guardrails…"
+          placeholder="Ask about broken landing pages, UTM tracking, channel ROAS, budget shifts, or daily checks…"
         />
         <div className="composer-controls">
           <div className="composer-meta-group">
-            <span
-              className="composer-route-preview mono-text tabular-nums"
-              data-testid="composer-route-preview"
-            >
-              <span
-                className={
-                  routePreview.tier === 'reasoning'
-                    ? 'arch-dot arch-dot-amber'
-                    : 'arch-dot arch-dot-blue'
-                }
-                aria-hidden="true"
-              />
-              <span>
-                {`AI Gateway -> ${routePreview.tier.toUpperCase()} (${routeReason}) · ${routePreview.primaryModel}`}
-              </span>
-              {routePreview.fallbackModels.length > 0 ? (
-                <span className="composer-route-muted">
-                  {` +${routePreview.fallbackModels.length} fallback`}
-                </span>
-              ) : null}
-              {injectFailure ? (
-                <span className="composer-route-armed"> · 503 armed</span>
-              ) : null}
+            <span className="composer-route-preview">
+              Google Ads · LinkedIn Ads · Meta Ads
             </span>
             <span className="composer-counter tabular-nums" aria-live="polite">
               {value.length.toLocaleString('en-US')} / 2,000
