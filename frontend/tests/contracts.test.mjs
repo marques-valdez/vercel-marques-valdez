@@ -1833,3 +1833,47 @@ test('AgentProgressCard renders live step checklist with 4-dot spinner, elapsed 
   assert.equal(doneHtml.includes('4 steps'), true);
   assert.equal(doneHtml.includes('4s'), true);
 });
+
+
+test('tool-errors suppresses superseded tool retry errors in default mode while keeping X-Ray and unrecovered errors visible', () => {
+  const {
+    collectSucceededToolNames,
+    shouldSuppressRetriedToolError,
+  } = loadTsModule('lib/tool-errors.ts');
+
+  const retriedParts = [
+    {
+      type: 'tool-audit_campaign_hygiene',
+      toolCallId: 'c1',
+      state: 'output-error',
+      errorText: 'Unsupported channel filter \'"all"\'',
+    },
+    {
+      type: 'tool-audit_campaign_hygiene',
+      toolCallId: 'c2',
+      state: 'output-available',
+      output: { brokenCount: 1, utmCount: 0, totalSpendAtRiskPerDay: 50 },
+    },
+    {
+      type: 'tool-analyze_in_sandbox',
+      toolCallId: 'c3',
+      state: 'output-error',
+      errorText: 'Sandbox error',
+    },
+  ];
+
+  const succeeded = collectSucceededToolNames(retriedParts);
+  assert.equal(succeeded.has('audit_campaign_hygiene'), true);
+  assert.equal(succeeded.has('analyze_in_sandbox'), false);
+
+  // Superseded hygiene retry error hidden in default mode, shown in X-Ray
+  assert.equal(shouldSuppressRetriedToolError(retriedParts[0], succeeded, false), true);
+  assert.equal(shouldSuppressRetriedToolError(retriedParts[0], succeeded, true), false);
+
+  // Succeeded part is never suppressed
+  assert.equal(shouldSuppressRetriedToolError(retriedParts[1], succeeded, false), false);
+
+  // Unrecovered error stays visible in both modes
+  assert.equal(shouldSuppressRetriedToolError(retriedParts[2], succeeded, false), false);
+  assert.equal(shouldSuppressRetriedToolError(retriedParts[2], succeeded, true), false);
+});

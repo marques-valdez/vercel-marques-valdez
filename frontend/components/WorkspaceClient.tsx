@@ -43,6 +43,10 @@ import {
   readStoredChatMessages,
   writeStoredChatMessages,
 } from '@/lib/chat-store';
+import {
+  collectSucceededToolNames,
+  shouldSuppressRetriedToolError,
+} from '@/lib/tool-errors';
 import { useChatScroll } from '@/lib/use-chat-scroll';
 import { PLAYBOOKS } from '@/lib/playbooks';
 import {
@@ -1392,10 +1396,20 @@ export function WorkspaceClient({
                     }
                   }
 
+                  const succeededToolNames = collectSucceededToolNames(message.parts);
                   const renderedParts = message.parts
-                    .map((part, idx) =>
-                      renderMessagePart(part, idx, sandboxStatusByCallId),
-                    )
+                    .map((part, idx) => {
+                      if (
+                        shouldSuppressRetriedToolError(
+                          part,
+                          succeededToolNames,
+                          architectMode,
+                        )
+                      ) {
+                        return null;
+                      }
+                      return renderMessagePart(part, idx, sandboxStatusByCallId);
+                    })
                     .filter((node) => node !== null);
 
                   const capturedFrames = architectMode

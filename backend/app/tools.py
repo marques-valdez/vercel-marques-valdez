@@ -30,7 +30,12 @@ from app.sandbox_runner import (
     run_monte_carlo_reallocation_in_sandbox,
     run_sandbox_query,
 )
-from app.sql_templates import MAX_DAYS_WINDOW, MAX_ROW_LIMIT, TemplateInputId
+from app.sql_templates import (
+    MAX_DAYS_WINDOW,
+    MAX_ROW_LIMIT,
+    TemplateInputId,
+    unwrap_llm_str,
+)
 from app.twin import (
     CHANNEL_NAME_TO_ID,
     ChannelId,
@@ -54,6 +59,32 @@ _HYGIENE_CHANNEL_ALIASES: dict[str, ChannelId] = {
 }
 
 
+def _unwrap_optional_str(v: Any) -> Any:
+    if not isinstance(v, str):
+        return v
+    cleaned = unwrap_llm_str(v)
+    if not cleaned or cleaned.lower() in {"null", "none", "undefined"}:
+        return None
+    return cleaned
+
+
+def _unwrap_required_str(v: Any) -> Any:
+    if not isinstance(v, str):
+        return v
+    return unwrap_llm_str(v)
+
+
+def _unwrap_str_list(v: Any) -> Any:
+    if isinstance(v, str):
+        cleaned = unwrap_llm_str(v)
+        if not cleaned or cleaned.lower() in {"null", "none", "undefined"}:
+            return None
+        return [cleaned]
+    if isinstance(v, list):
+        return [unwrap_llm_str(item) if isinstance(item, str) else item for item in v]
+    return v
+
+
 class AuditCampaignHygieneInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -61,6 +92,11 @@ class AuditCampaignHygieneInput(BaseModel):
         default=None,
         description="Optional channel filter: google_ads, linkedin_ads, meta_ads, or all.",
     )
+
+    @field_validator("channel", mode="before")
+    @classmethod
+    def _clean_channel(cls, v: Any) -> Any:
+        return _unwrap_optional_str(v)
 
 
 def _reject_bool_numeric_param(v: Any) -> Any:
@@ -104,6 +140,16 @@ class AnalyzeInSandboxInput(BaseModel):
         description="Maximum number of summary rows returned.",
     )
 
+    @field_validator("template_id", "sort_order", mode="before")
+    @classmethod
+    def _clean_enum_strings(cls, v: Any) -> Any:
+        return _unwrap_required_str(v)
+
+    @field_validator("channel", mode="before")
+    @classmethod
+    def _clean_channel(cls, v: Any) -> Any:
+        return _unwrap_optional_str(v)
+
     @field_validator("days", "limit", mode="before")
     @classmethod
     def _reject_bool_days_and_limit(cls, v: Any) -> Any:
@@ -127,6 +173,11 @@ class ProposeBudgetReallocationInput(BaseModel):
         allow_inf_nan=False,
         description="Daily USD shift amount; omit to shift 50% of source campaign daily budget.",
     )
+
+    @field_validator("from_campaign", "to_campaign", mode="before")
+    @classmethod
+    def _clean_campaign_refs(cls, v: Any) -> Any:
+        return _unwrap_optional_str(v)
 
     @field_validator("amount_per_day", mode="before")
     @classmethod
@@ -167,6 +218,21 @@ class CompileWorkflowInput(BaseModel):
         description="5-field UTC cron schedule for production Temporal execution.",
     )
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, v: Any) -> Any:
+        return _unwrap_optional_str(v)
+
+    @field_validator("template", "schedule", mode="before")
+    @classmethod
+    def _clean_template_and_schedule(cls, v: Any) -> Any:
+        return _unwrap_required_str(v)
+
+    @field_validator("channels", mode="before")
+    @classmethod
+    def _clean_channels(cls, v: Any) -> Any:
+        return _unwrap_str_list(v)
+
     @field_validator("threshold", mode="before")
     @classmethod
     def _reject_bool_threshold(cls, v: Any) -> Any:
@@ -176,8 +242,8 @@ class CompileWorkflowInput(BaseModel):
 def _normalize_hygiene_channel(channel: str | None) -> ChannelId | None:
     if channel is None:
         return None
-    trimmed = channel.strip()
-    if not trimmed or trimmed.lower() in {"all", "*"}:
+    trimmed = unwrap_llm_str(channel)
+    if not trimmed or trimmed.lower() in {"all", "*", "null", "none", "undefined"}:
         return None
     if trimmed in CHANNEL_NAME_TO_ID:
         return CHANNEL_NAME_TO_ID[trimmed]
@@ -193,8 +259,8 @@ def _resolve_campaign_ref(
 ) -> str | None:
     if ref is None:
         return None
-    trimmed = ref.strip()
-    if not trimmed:
+    trimmed = unwrap_llm_str(ref)
+    if not trimmed or trimmed.lower() in {"null", "none", "undefined"}:
         return None
     by_id = {c.campaignId: c.campaignId for c in campaigns}
     if trimmed in by_id:

@@ -1665,3 +1665,82 @@ def test_agent_status_emits_reconciled_turn_progress_steps_across_multi_tool_tur
         "done",
         "in_progress",
     ]
+
+
+
+def test_double_quoted_llm_tool_args_unwrap_cleanly_without_allowing_invalid_channels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-gateway-key")
+    app.state.model_factory = _make_model_factory(
+        [
+            ScriptedStep(
+                text_deltas=(),
+                tool_calls=[
+                    {
+                        "id": "call_hyg_all_quoted",
+                        "name": "audit_campaign_hygiene",
+                        "args": {"channel": '"all"'},
+                    },
+                    {
+                        "id": "call_hyg_g_quoted",
+                        "name": "audit_campaign_hygiene",
+                        "args": {"channel": '"google_ads"'},
+                    },
+                    {
+                        "id": "call_sbx_quoted",
+                        "name": "analyze_in_sandbox",
+                        "args": {
+                            "template_id": '"channel_roas_summary"',
+                            "channel": "'meta_ads'",
+                        },
+                    },
+                    {
+                        "id": "call_wf_quoted",
+                        "name": "compile_workflow",
+                        "args": {
+                            "template": '"daily-pacing-guardrail"',
+                            "channels": ['"google_ads"', "'linkedin_ads'"],
+                            "threshold": 15,
+                        },
+                    },
+                ],
+            ),
+            ScriptedStep(
+                text_deltas=("All four quoted tool calls succeeded on the first attempt.",),
+            ),
+        ]
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/agent/chat",
+        json={
+            "messages": [{"role": "user", "content": "Audit all channels"}],
+            "tierHint": "fast",
+        },
+    )
+    assert resp.status_code == 200
+    frames, saw_done = _parse_sse_body(resp.text)
+    assert saw_done is True
+
+    error_frames = [f for f in frames if f.get("type") == "tool-output-error"]
+    assert error_frames == []
+
+    outputs_by_id = {
+        f["toolCallId"]: f["output"]
+        for f in frames
+        if f.get("type") == "tool-output-available"
+    }
+    assert len(outputs_by_id["call_hyg_all_quoted"]["channels"]) == 3
+    assert len(outputs_by_id["call_hyg_g_quoted"]["channels"]) == 1
+    assert outputs_by_id["call_hyg_g_quoted"]["channels"][0]["channelId"] == "google_ads"
+    assert outputs_by_id["call_sbx_quoted"]["rowsReturned"] >= 1
+    assert outputs_by_id["call_wf_quoted"]["channels"] == ["google_ads", "linkedin_ads"]
+
+    # Genuinely invalid channels must still be rejected even when double-quoted
+    bad = client.post(
+        "/api/agent/sandbox/query",
+        json={"templateId": "channel_roas_summary", "channel": '"tiktok_ads"'},
+    )
+    assert bad.status_code == 422

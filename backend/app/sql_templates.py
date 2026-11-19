@@ -107,14 +107,32 @@ def normalize_template_id(template_id: str | None) -> TemplateId:
     return resolved
 
 
+def unwrap_llm_str(value: str) -> str:
+    """Strip whitespace and stray matching outer quotes emitted by tool-calling models.
+
+    Some open/free-tier models double-encode JSON string tool arguments (for
+    example emitting ``"\"all\""`` or ``"\"google_ads\""``). Stripping matching
+    outer quote pairs recovers the intended token without weakening allowlist
+    validation.
+    """
+    cleaned = value.strip()
+    while len(cleaned) >= 2 and (
+        (cleaned[0] == '"' and cleaned[-1] == '"')
+        or (cleaned[0] == "'" and cleaned[-1] == "'")
+        or (cleaned[0] == "`" and cleaned[-1] == "`")
+    ):
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
+
+
 def normalize_channel_filter(channel: str | None) -> str | None:
     """Normalize a channel slug or display label into the exact rows.csv channel value."""
     if channel is None:
         return None
     if not isinstance(channel, str):
         raise ValueError("channel filter must be a string or None")
-    trimmed = channel.strip()
-    if not trimmed or trimmed.lower() in {"all", "*"}:
+    trimmed = unwrap_llm_str(channel)
+    if not trimmed or trimmed.lower() in {"all", "*", "null", "none", "undefined"}:
         return None
     if trimmed in CHANNEL_NAME_TO_ID:
         return trimmed

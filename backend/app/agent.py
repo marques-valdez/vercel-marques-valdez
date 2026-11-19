@@ -303,6 +303,13 @@ def build_agent_graph(
     def _insert_tool_step(step_id: str, title: str) -> None:
         if any(step["id"] == step_id for step in progress_steps):
             return
+        # If an earlier attempt of the same tool failed and the model retries,
+        # reuse that slot instead of duplicating failed rows in the checklist.
+        for step in progress_steps:
+            if step["title"] == title and step["status"] == "failed":
+                step["id"] = step_id
+                step["status"] = "pending"
+                return
         synth_idx = next(
             (i for i, s in enumerate(progress_steps) if s["id"] == "synthesize"),
             len(progress_steps),
