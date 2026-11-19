@@ -198,7 +198,8 @@ def build_system_prompt(state: DerivedTwinState) -> str:
         "- For cross-channel or campaign return on ad spend (ROAS), spend, clicks, conversions, or pipeline breakdowns, "
         "call analyze_in_sandbox.\n"
         "- For shifting wasted spend or proposing daily budget changes, call propose_budget_reallocation. "
-        "Budget proposals stay in draft until the marketing manager clicks Approve in the card.\n"
+        "Budget proposals stay in draft until the marketing manager clicks Approve in the card; cite the "
+        "simulated 30-day P10/P50/P90 pipeline forecast and probability of positive lift in plain language.\n"
         "- For recurring morning checks, pacing alerts, or Slack/Sheets briefs, call compile_workflow "
         "(pass a clear marketing `name` such as 'Weekday Paid Social Link & Pacing Check' when appropriate).\n"
         "- When a budget proposal is approved or declined, confirm the decision and summarize the updated "
@@ -492,6 +493,27 @@ def build_agent_graph(
                             },
                         }
                     )
+                if tool_name == "propose_budget_reallocation":
+                    writer(
+                        {
+                            "kind": "sandbox_status",
+                            "data": {
+                                "toolCallId": call_id,
+                                "stage": "provisioning",
+                                "label": "Provisioning isolated microVM for Monte Carlo forecast",
+                            },
+                        }
+                    )
+                    writer(
+                        {
+                            "kind": "sandbox_status",
+                            "data": {
+                                "toolCallId": call_id,
+                                "stage": "executing_sql",
+                                "label": "Running 2,000-trial diminishing-returns simulation",
+                            },
+                        }
+                    )
                 result = await target_tool.ainvoke(dict(tool_args))
                 writer(
                     {
@@ -500,14 +522,18 @@ def build_agent_graph(
                         "output": result,
                     }
                 )
-                if tool_name == "analyze_in_sandbox":
+                if tool_name in ("analyze_in_sandbox", "propose_budget_reallocation"):
                     writer(
                         {
                             "kind": "sandbox_status",
                             "data": {
                                 "toolCallId": call_id,
                                 "stage": "completed",
-                                "label": "MicroVM complete · compact JSON returned",
+                                "label": (
+                                    "MicroVM forecast complete · P10/P50/P90 returned"
+                                    if tool_name == "propose_budget_reallocation"
+                                    else "MicroVM complete · compact JSON returned"
+                                ),
                             },
                         }
                     )

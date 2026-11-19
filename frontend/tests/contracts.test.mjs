@@ -1211,3 +1211,67 @@ test('workspace-store ID persistence and Neon Postgres badge in VercelArchitectu
     globalThis.window = prevWindow;
   }
 });
+
+test('ReallocationCard renders 30-day Monte Carlo P10/P50/P90 forecast band', async () => {
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { ReallocationCard } = loadTsModule('components/ReallocationCard.tsx');
+
+  const html = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, {
+      state: 'completed',
+      output: {
+        proposalId: 'prop_sim_1',
+        fromCampaign: 'cmp_a',
+        fromCampaignName: 'Prospecting Social',
+        fromChannel: 'LinkedIn Ads',
+        toCampaign: 'cmp_b',
+        toCampaignName: 'Brand Search',
+        toChannel: 'Google Ads',
+        amountPerDay: 350,
+        before: {
+          fromDailyBudget: 700,
+          toDailyBudget: 900,
+          fromRoas: 1.7,
+          toRoas: 4.5,
+          totalDailyBudget: 5000,
+        },
+        after: {
+          fromDailyBudget: 350,
+          toDailyBudget: 1250,
+          fromRoas: 1.7,
+          toRoas: 4.5,
+          totalDailyBudget: 5000,
+        },
+        blendedRoasBefore: 3.1,
+        blendedRoasAfter: 3.3,
+        simulation: {
+          mode: 'sandbox',
+          trials: 2000,
+          horizonDays: 30,
+          sandboxMs: 412,
+          incrementalPipelineP10: 5400,
+          incrementalPipelineP50: 8200,
+          incrementalPipelineP90: 11100,
+          blendedRoasP10: 3.18,
+          blendedRoasP50: 3.28,
+          blendedRoasP90: 3.39,
+          probabilityOfPositiveLiftPct: 95.4,
+          targetSaturationDragPct: 6.2,
+        },
+      },
+      decision: null,
+      disabled: false,
+      onApprove: async () => {},
+      onDecline: () => {},
+      onRetry: () => {},
+    }),
+  );
+
+  assert.equal(html.includes('30-day pipeline forecast'), true);
+  assert.equal(html.includes('95% chance of positive lift'), true);
+  assert.equal(html.includes('+$5,400'), true);
+  assert.equal(html.includes('+$8,200'), true);
+  assert.equal(html.includes('+$11,100'), true);
+  assert.equal(html.includes('6.2% marginal ROAS compression'), true);
+});

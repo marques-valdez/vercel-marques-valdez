@@ -18,13 +18,19 @@ Serverless & Neon invariants:
 
 from __future__ import annotations
 
+import csv
+from decimal import Decimal
+import io
 import json
 import os
+from pathlib import Path
 import re
 import threading
 from typing import Any, Final, Mapping, Sequence
 
 import psycopg
+
+from app.twin import EXPECTED_CSV_COLUMNS, get_rows_csv_text
 
 WORKSPACE_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 MAX_WORKFLOWS_PER_WORKSPACE: Final[int] = 25
@@ -33,6 +39,8 @@ CONNECT_TIMEOUT_SECONDS: Final[int] = 5
 
 _schema_lock = threading.Lock()
 _schema_initialized_dsn: str | None = None
+_perf_seed_lock = threading.Lock()
+_perf_seeded_dsn: str | None = None
 
 _SCHEMA_SQL: Final[tuple[str, ...]] = (
     """
@@ -86,6 +94,27 @@ _SCHEMA_SQL: Final[tuple[str, ...]] = (
         latency_ms DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS relay_daily_performance (
+        date DATE NOT NULL,
+        channel TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        ad_group_id TEXT NOT NULL,
+        spend DOUBLE PRECISION NOT NULL,
+        clicks INTEGER NOT NULL,
+        conversions INTEGER NOT NULL,
+        pipeline_value DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY (date, ad_group_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_relay_perf_channel_date
+        ON relay_daily_performance (channel, date)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_relay_perf_campaign_date
+        ON relay_daily_performance (campaign_id, date)
     """,
 )
 
@@ -397,3 +426,149 @@ def reset_workspace_data(workspace_id: str) -> bool:
                 (workspace_id,),
             )
     return True
+
+
+def _normalize_pg_scalar(value: Any) -> Any:
+    """Convert psycopg return types (Decimal, date, -0.0) into clean JSON scalars."""
+    if isinstance(value, Decimal):
+        f = float(value)
+        return 0.0 if f == 0.0 else f
+    if isinstance(value, float) and not isinstance(value, bool):
+        return 0.0 if value == 0.0 else value
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        return value.isoformat()
+    return value
+
+
+def _ensure_performance_seeded(
+    conn: psycopg.Connection[Any],
+    dsn: str,
+    data_dir: Path | None = None,
+) -> int:
+    """Seed relay_daily_performance once per Neon branch via fast COPY FROM STDIN."""
+    global _perf_seeded_dsn
+    if _perf_seeded_dsn == dsn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM relay_daily_performance")
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+    with _perf_seed_lock:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM relay_daily_performance")
+            existing = cur.fetchone()
+            existing_count = int(existing[0]) if existing else 0
+            if existing_count > 0:
+                _perf_seeded_dsn = dsn
+                return existing_count
+
+            csv_text = get_rows_csv_text(data_dir)
+            reader = csv.reader(io.StringIO(csv_text, newline=""))
+            header = next(reader, None)
+            if header is None or tuple(header) != EXPECTED_CSV_COLUMNS:
+                raise ValueError(f"Unexpected rows.csv header {header!r}")
+
+            copy_sql = (
+                "COPY relay_daily_performance "
+                "(date, channel, campaign_id, ad_group_id, spend, clicks, conversions, pipeline_value) "
+                "FROM STDIN"
+            )
+            inserted = 0
+            with cur.copy(copy_sql) as copy:
+                for row in reader:
+                    if not row:
+                        continue
+                    copy.write_row(
+                        (
+                            row[0],
+                            row[1],
+                            row[2],
+                            row[3],
+                            float(row[4]),
+                            int(row[5]),
+                            int(row[6]),
+                            float(row[7]),
+                        )
+                    )
+                    inserted += 1
+            _perf_seeded_dsn = dsn
+            return inserted
+
+
+def run_postgres_analytics_query(
+    pg_sql: str,
+    params: Sequence[Any] = (),
+    *,
+    data_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Execute a parameterized analytics template directly against Neon Postgres."""
+    dsn = get_database_url()
+    if dsn is None:
+        raise RuntimeError("Neon Postgres DATABASE_URL is not configured.")
+
+    with _connect(dsn) as conn:
+        _ensure_schema(conn, dsn)
+        rows_scanned = _ensure_performance_seeded(conn, dsn, data_dir=data_dir)
+        with conn.cursor() as cur:
+            cur.execute(pg_sql, tuple(params))
+            columns = [desc.name for desc in (cur.description or ())]
+            raw_rows = cur.fetchall()
+
+    table = [
+        {col: _normalize_pg_scalar(val) for col, val in zip(columns, raw_row, strict=True)}
+        for raw_row in raw_rows
+    ]
+    return {
+        "rowsScanned": rows_scanned,
+        "rowsReturned": len(table),
+        "table": table,
+    }
+
+
+def fetch_campaign_daily_series(
+    campaign_ids: Sequence[str],
+    *,
+    data_dir: Path | None = None,
+) -> dict[str, list[dict[str, Any]]] | None:
+    """Fetch compact daily spend/pipeline history per campaign from Neon Postgres.
+
+    Returns None when DATABASE_URL is unset so callers can fall back to local CSV.
+    """
+    dsn = get_database_url()
+    if dsn is None or not campaign_ids:
+        return None
+
+    unique_ids = list(dict.fromkeys(cid.strip() for cid in campaign_ids if cid and cid.strip()))
+    if not unique_ids:
+        return None
+
+    with _connect(dsn) as conn:
+        _ensure_schema(conn, dsn)
+        _ensure_performance_seeded(conn, dsn, data_dir=data_dir)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    campaign_id,
+                    date::text AS date,
+                    SUM(spend)::double precision AS spend,
+                    SUM(pipeline_value)::double precision AS pipeline_value,
+                    SUM(conversions)::integer AS conversions
+                FROM relay_daily_performance
+                WHERE campaign_id = ANY(%s)
+                GROUP BY campaign_id, date
+                ORDER BY campaign_id ASC, date ASC
+                """,
+                (unique_ids,),
+            )
+            grouped: dict[str, list[dict[str, Any]]] = {cid: [] for cid in unique_ids}
+            for cid, date_str, spend, pipeline_val, conv in cur.fetchall():
+                grouped.setdefault(str(cid), []).append(
+                    {
+                        "date": str(date_str),
+                        "spend": float(_normalize_pg_scalar(spend)),
+                        "pipeline_value": float(_normalize_pg_scalar(pipeline_val)),
+                        "conversions": int(conv),
+                    }
+                )
+    return grouped

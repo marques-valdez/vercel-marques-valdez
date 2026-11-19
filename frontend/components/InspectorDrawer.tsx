@@ -47,8 +47,14 @@ const REAL_VS_STANDIN_ROWS: ReadonlyArray<{
     isReal: true,
   },
   {
-    production: 'Isolated analytics execution',
-    demo: 'Vercel Sandbox, live, with in-process fallback',
+    production: 'Relational campaign data & workspace state',
+    demo: 'Neon Serverless Postgres (indexed SQL + per-workspace persistence)',
+    status: 'Real, local fallback',
+    isReal: true,
+  },
+  {
+    production: 'Isolated Python statistical compute',
+    demo: 'Vercel Sandbox (2,000-trial Monte Carlo simulator, persistent=False)',
     status: 'Real, fallback badged',
     isReal: true,
   },

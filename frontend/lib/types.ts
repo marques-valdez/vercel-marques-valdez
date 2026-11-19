@@ -148,13 +148,28 @@ export interface HygieneToolOutput {
 
 export interface SandboxToolOutput {
   templateId?: string;
-  mode: 'sandbox' | 'in-process';
+  mode: 'neon-postgres' | 'sandbox' | 'in-process';
   sandboxMs: number;
   rowsScanned: number;
   rowsReturned: number;
   sql: string;
   table: Array<Record<string, string | number | boolean | null>>;
   estTokensAvoided: number;
+}
+
+export interface MonteCarloSimulation {
+  mode: 'sandbox' | 'in-process';
+  trials: number;
+  horizonDays: number;
+  sandboxMs: number;
+  incrementalPipelineP10: number;
+  incrementalPipelineP50: number;
+  incrementalPipelineP90: number;
+  blendedRoasP10: number;
+  blendedRoasP50: number;
+  blendedRoasP90: number;
+  probabilityOfPositiveLiftPct: number;
+  targetSaturationDragPct: number;
 }
 
 export interface ReallocationWindowMetrics {
@@ -179,6 +194,7 @@ export interface ReallocationToolOutput {
   blendedRoasBefore: number;
   blendedRoasAfter: number;
   formula?: string;
+  simulation?: MonteCarloSimulation;
 }
 
 export interface WorkflowStepSpec {

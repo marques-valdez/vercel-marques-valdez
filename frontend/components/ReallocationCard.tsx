@@ -31,6 +31,15 @@ function formatBudget(amount: number): string {
   });
 }
 
+function formatSignedCurrency(amount: number): string {
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+  const abs = Math.abs(amount);
+  return `${sign}$${abs.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
+}
+
 export function ReallocationCard({
   state,
   output,
@@ -178,6 +187,63 @@ export function ReallocationCard({
           </div>
         </div>
       </div>
+
+      {output.simulation ? (
+        <div
+          className="forecast-band tabular-nums"
+          data-testid="reallocation-forecast-band"
+        >
+          <div className="forecast-band-header">
+            <div>
+              <div className="panel-heading">
+                {`${output.simulation.horizonDays}-day pipeline forecast (with diminishing returns)`}
+              </div>
+              <div className="cell-secondary">
+                {`${output.simulation.trials.toLocaleString('en-US')}-trial Monte Carlo simulation calibrated from historical daily variance`}
+              </div>
+            </div>
+            <span className="pill badge-green" data-testid="forecast-lift-probability">
+              {`${Math.round(output.simulation.probabilityOfPositiveLiftPct)}% chance of positive lift`}
+            </span>
+          </div>
+
+          <div className="forecast-grid">
+            <div className="forecast-cell">
+              <span className="forecast-label">Conservative (P10)</span>
+              <strong className="forecast-value">
+                {formatSignedCurrency(output.simulation.incrementalPipelineP10)}
+              </strong>
+              <span className="forecast-sub">
+                {`${output.simulation.blendedRoasP10.toFixed(2)}x blended ROAS`}
+              </span>
+            </div>
+            <div className="forecast-cell forecast-cell-median">
+              <span className="forecast-label">Expected (P50)</span>
+              <strong className="forecast-value">
+                {formatSignedCurrency(output.simulation.incrementalPipelineP50)}
+              </strong>
+              <span className="forecast-sub">
+                {`${output.simulation.blendedRoasP50.toFixed(2)}x blended ROAS`}
+              </span>
+            </div>
+            <div className="forecast-cell">
+              <span className="forecast-label">Upside (P90)</span>
+              <strong className="forecast-value">
+                {formatSignedCurrency(output.simulation.incrementalPipelineP90)}
+              </strong>
+              <span className="forecast-sub">
+                {`${output.simulation.blendedRoasP90.toFixed(2)}x blended ROAS`}
+              </span>
+            </div>
+          </div>
+
+          {output.simulation.targetSaturationDragPct > 0 ? (
+            <p className="forecast-note">
+              {`Accounts for an estimated ${output.simulation.targetSaturationDragPct.toFixed(1)}% marginal ROAS compression as ${toLabel} scales budget.`}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <details className="technical-drawer">
         <summary>How projected ROAS is calculated</summary>

@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | **Vercel AI Gateway** | **Active** (`BYOK` to Vertex AI) | **Active** *(unchanged)* | Two-tier routing (`fast` vs. `reasoning`), ordered model fallbacks, `caching: 'auto'`, `0%` token markup on GCP commit. |
 | **Next.js + `@ai-sdk/react` + `next/og`** | **Active** (consumes Python SSE) | **Active** *(zero UI rewrite)* | Cold-start playbooks, typed Glass Box tool cards over `x-vercel-ai-ui-message-stream: v1`, `/p/[slug]` viral share cards. |
-| **Vercel Sandbox** | **Active** (`deny-all` microVMs) | **Active** *(unchanged)* | Runs isolated SQL/Python over `10,400` daily rows outside pod RAM; returns 3–12 summary rows (~`140K` tokens avoided). |
+| **Vercel Sandbox** | **Active** (`deny-all`, `persistent=False` microVMs) | **Active** *(unchanged)* | Runs isolated CPU-bound Python (2,000-trial Monte Carlo reallocation + diminishing-returns simulator) outside pod RAM; returns ~1 KB P10/P50/P90 JSON. |
 | **Previews & Rolling Releases** | **Active** (`iad1` next to `us-east4`) | **Active** *(full-stack)* | Per-PR preview URLs in <3 min, canary Rolling Releases, and second-level Instant Rollback. |
 | **Agent & Workflow Runtime** | **Stays Python on GCP** (`LangGraph` + `Temporal`) | **`WorkflowAgent` + `Vercel Workflows`** | Keeps working Python cron DAGs today (`~$0.00055` vs. `~$0.00066`/10-step run); unlocks tab-close survival, `50 MB` payloads, Skew Protection, and `$0`-compute `createHook()` waits in Phase 2. |
 | **Data, Lakehouse & Evals** | **Stays on GCP (`us-east4`)** | **Stays on GCP (`us-east4`)** | `AlloyDB` (`pgvector`/RLS), `~200 TiB` lakehouse, and `DeepEval` stay next to data gravity via OIDC federation. |

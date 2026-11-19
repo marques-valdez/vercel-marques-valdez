@@ -21,10 +21,15 @@ import json
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
 
+import anyio
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.sandbox_runner import run_sandbox_query
+from app.db import fetch_campaign_daily_series, is_database_configured
+from app.sandbox_runner import (
+    run_monte_carlo_reallocation_in_sandbox,
+    run_sandbox_query,
+)
 from app.sql_templates import MAX_DAYS_WINDOW, MAX_ROW_LIMIT, TemplateInputId
 from app.twin import (
     CHANNEL_NAME_TO_ID,
@@ -256,12 +261,6 @@ def build_agent_tools(
         to_campaign: str | None = None,
         amount_per_day: float | None = None,
     ) -> dict[str, Any]:
-        # Run SQLite campaign ROAS aggregation without consuming the request's single remote microVM slot.
-        await run_sandbox_query(
-            "campaign_roas_ranking",
-            prefer_in_process=True,
-            data_dir=data_dir,
-        )
         current_state = compute_twin_state(frozen_mutations, data_dir=data_dir)
         resolved_from = _resolve_campaign_ref(from_campaign, current_state.campaigns)
         resolved_to = _resolve_campaign_ref(to_campaign, current_state.campaigns)
@@ -273,6 +272,36 @@ def build_agent_tools(
             amount_per_day=amount_per_day,
             data_dir=data_dir,
         )
+
+        # Pull only the 2 campaigns' daily series from Neon Postgres when connected,
+        # then run the 2,000-trial Monte Carlo + diminishing-returns simulator in @vercel/sandbox.
+        series_from_db = None
+        if is_database_configured():
+            try:
+                series_from_db = await anyio.to_thread.run_sync(
+                    lambda: fetch_campaign_daily_series(
+                        [preview.fromCampaign, preview.toCampaign],
+                        data_dir=data_dir,
+                    )
+                )
+            except Exception:
+                series_from_db = None
+
+        simulation = await run_monte_carlo_reallocation_in_sandbox(
+            from_campaign=preview.fromCampaign,
+            to_campaign=preview.toCampaign,
+            from_daily_budget=preview.before.fromDailyBudget,
+            to_daily_budget=preview.before.toDailyBudget,
+            from_roas=preview.before.fromRoas,
+            to_roas=preview.before.toRoas,
+            amount_per_day=preview.amountPerDay,
+            portfolio_daily_budget=current_state.totals.dailyBudget,
+            portfolio_blended_roas=current_state.totals.blendedRoas,
+            campaign_series=series_from_db,
+            data_dir=data_dir,
+            prefer_in_process=not is_database_configured(),
+        )
+
         digest = hashlib.sha256(
             json.dumps(
                 {
@@ -287,6 +316,7 @@ def build_agent_tools(
         return {
             "proposalId": f"prop_{digest}",
             **preview.model_dump(),
+            "simulation": simulation.model_dump(),
         }
 
     async def _compile_workflow(

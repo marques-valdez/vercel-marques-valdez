@@ -27,8 +27,10 @@ import csv
 from dataclasses import dataclass
 import io
 import json
+import math
 import os
 from pathlib import Path
+import random
 import sqlite3
 import time
 from typing import Any, Final, Literal, Mapping, Sequence
@@ -39,6 +41,7 @@ from vercel import sandbox
 from vercel.oidc.credentials import get_credentials
 from vercel.sandbox import NetworkPolicy
 
+from app.db import is_database_configured, run_postgres_analytics_query
 from app.sql_templates import TemplateId, compile_sql_template
 from app.twin import EXPECTED_CSV_COLUMNS, get_rows_csv_text
 
@@ -47,7 +50,7 @@ SANDBOX_KILL_AFTER_SECONDS: Final[int] = 25
 MAX_SANDBOXES_PER_REQUEST: Final[int] = 1
 CHARS_PER_ESTIMATED_TOKEN: Final[int] = 4
 
-SandboxMode = Literal["sandbox", "in-process"]
+SandboxMode = Literal["neon-postgres", "sandbox", "in-process"]
 
 @dataclass
 class _RequestSandboxBudget:
@@ -260,6 +263,25 @@ def compute_estimated_tokens_avoided(
     )
 
 
+class MonteCarloSimulationResult(BaseModel):
+    """Structured output of the 2,000-trial Monte Carlo budget shift simulator."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["sandbox", "in-process"]
+    trials: int
+    horizonDays: int
+    sandboxMs: float
+    incrementalPipelineP10: float
+    incrementalPipelineP50: float
+    incrementalPipelineP90: float
+    blendedRoasP10: float
+    blendedRoasP50: float
+    blendedRoasP90: float
+    probabilityOfPositiveLiftPct: float
+    targetSaturationDragPct: float
+
+
 async def run_sandbox_query(
     template_id: str = "channel_roas_summary",
     params: Mapping[str, Any] | None = None,
@@ -267,63 +289,80 @@ async def run_sandbox_query(
     data_dir: Path | None = None,
     prefer_in_process: bool = False,
 ) -> SandboxQueryResult:
-    """Run parameterized SQLite analytics in Vercel Sandbox with in-process fallback."""
-    compiled = compile_sql_template(template_id, params)
+    """Run parameterized analytics directly on Neon Postgres when configured, else Sandbox/SQLite."""
     csv_text = get_rows_csv_text(data_dir)
-    job_source = build_job_script(compiled.sql, compiled.params)
-
     t0 = time.perf_counter()
     parsed: Mapping[str, Any] | None = None
     mode: SandboxMode = "in-process"
 
-    # Enforce a hard cap of 1 microVM per HTTP request via ContextVar so a
-    # multi-step LLM loop cannot spawn runaway Sandboxes in a single turn.
-    can_launch_sandbox = False
-    if not prefer_in_process and not is_sandbox_disabled():
-        budget = _request_sandbox_budget.get()
-        if budget is None:
-            budget = _RequestSandboxBudget()
-            _request_sandbox_budget.set(budget)
-        if budget.count < MAX_SANDBOXES_PER_REQUEST:
-            budget.count += 1
-            can_launch_sandbox = True
-
-    if can_launch_sandbox:
+    if not prefer_in_process and is_database_configured():
+        compiled_pg = compile_sql_template(template_id, params, dialect="postgres")
         try:
-            with anyio.fail_after(SANDBOX_TIMEOUT_SECONDS):
-                async with sandbox.create_sandbox(
-                    network_policy=NetworkPolicy.deny_all(),
-                    execution_time_limit=SANDBOX_TIMEOUT_SECONDS,
-                    persistent=False,
-                ) as box:
-                    await box.fs.write_text("rows.csv", csv_text)
-                    await box.fs.write_text("job.py", job_source)
-                    result = await box.run_command(
-                        "python",
-                        ["job.py"],
-                        capture_output=True,
-                        check=True,
-                        kill_after=SANDBOX_KILL_AFTER_SECONDS,
-                    )
-                    raw_out = result.stdout
-                    out_text = (
-                        raw_out.decode("utf-8")
-                        if isinstance(raw_out, (bytes, bytearray))
-                        else str(raw_out or "")
-                    )
-                    candidate = json.loads(out_text)
-                    if (
-                        not isinstance(candidate, Mapping)
-                        or not isinstance(candidate.get("table"), list)
-                        or isinstance(candidate.get("rowsScanned"), bool)
-                        or not isinstance(candidate.get("rowsScanned"), int)
-                    ):
-                        raise ValueError("Invalid JSON summary returned from sandbox")
-                    parsed = candidate
-                    mode = "sandbox"
+            parsed = await anyio.to_thread.run_sync(
+                lambda: run_postgres_analytics_query(
+                    compiled_pg.sql,
+                    compiled_pg.params,
+                    data_dir=data_dir,
+                )
+            )
+            compiled = compiled_pg
+            mode = "neon-postgres"
         except Exception:
             parsed = None
-            mode = "in-process"
+            compiled = compile_sql_template(template_id, params, dialect="sqlite")
+    else:
+        compiled = compile_sql_template(template_id, params, dialect="sqlite")
+
+    if parsed is None:
+        job_source = build_job_script(compiled.sql, compiled.params)
+        # Enforce a hard cap of 1 microVM per HTTP request via ContextVar so a
+        # multi-step LLM loop cannot spawn runaway Sandboxes in a single turn.
+        can_launch_sandbox = False
+        if not prefer_in_process and not is_sandbox_disabled():
+            budget = _request_sandbox_budget.get()
+            if budget is None:
+                budget = _RequestSandboxBudget()
+                _request_sandbox_budget.set(budget)
+            if budget.count < MAX_SANDBOXES_PER_REQUEST:
+                budget.count += 1
+                can_launch_sandbox = True
+
+        if can_launch_sandbox:
+            try:
+                with anyio.fail_after(SANDBOX_TIMEOUT_SECONDS):
+                    async with sandbox.create_sandbox(
+                        network_policy=NetworkPolicy.deny_all(),
+                        execution_time_limit=SANDBOX_TIMEOUT_SECONDS,
+                        persistent=False,
+                    ) as box:
+                        await box.fs.write_text("rows.csv", csv_text)
+                        await box.fs.write_text("job.py", job_source)
+                        result = await box.run_command(
+                            "python",
+                            ["job.py"],
+                            capture_output=True,
+                            check=True,
+                            kill_after=SANDBOX_KILL_AFTER_SECONDS,
+                        )
+                        raw_out = result.stdout
+                        out_text = (
+                            raw_out.decode("utf-8")
+                            if isinstance(raw_out, (bytes, bytearray))
+                            else str(raw_out or "")
+                        )
+                        candidate = json.loads(out_text)
+                        if (
+                            not isinstance(candidate, Mapping)
+                            or not isinstance(candidate.get("table"), list)
+                            or isinstance(candidate.get("rowsScanned"), bool)
+                            or not isinstance(candidate.get("rowsScanned"), int)
+                        ):
+                            raise ValueError("Invalid JSON summary returned from sandbox")
+                        parsed = candidate
+                        mode = "sandbox"
+            except Exception:
+                parsed = None
+                mode = "in-process"
 
     if parsed is None:
         parsed = run_sqlite_job(csv_text, compiled.sql, compiled.params)
@@ -343,4 +382,301 @@ async def run_sandbox_query(
         sql=compiled.sql,
         table=table_rows,
         estTokensAvoided=est_avoided,
+    )
+
+
+def _extract_campaign_series_from_csv(
+    csv_text: str,
+    campaign_ids: Sequence[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Aggregate local rows.csv into daily spend/pipeline series per campaign."""
+    wanted = set(campaign_ids)
+    buckets: dict[tuple[str, str], list[float]] = {}
+    reader = csv.reader(io.StringIO(csv_text, newline=""))
+    next(reader, None)
+    for row in reader:
+        if not row or row[2] not in wanted:
+            continue
+        key = (row[2], row[0])
+        entry = buckets.get(key)
+        if entry is None:
+            buckets[key] = [float(row[4]), float(row[7])]
+        else:
+            entry[0] += float(row[4])
+            entry[1] += float(row[7])
+
+    grouped: dict[str, list[dict[str, Any]]] = {cid: [] for cid in campaign_ids}
+    for (cid, date_str), (spend, pipeline) in sorted(buckets.items()):
+        grouped[cid].append({"date": date_str, "spend": spend, "pipeline_value": pipeline})
+    return grouped
+
+
+def run_monte_carlo_in_process(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Deterministic Python stdlib Monte Carlo simulator with Hill diminishing returns."""
+    from_budget = float(spec["fromDailyBudget"])
+    to_budget = float(spec["toDailyBudget"])
+    shift = float(spec["amountPerDay"])
+    portfolio_budget = float(spec["portfolioDailyBudget"])
+    portfolio_roas = float(spec["portfolioBlendedRoas"])
+    from_mean_roas = max(0.05, float(spec["fromRoas"]))
+    to_mean_roas = max(0.05, float(spec["toRoas"]))
+    trials = int(spec.get("trials", 2000))
+    horizon_days = int(spec.get("horizonDays", 30))
+    seed = int(spec.get("seed", 42))
+
+    def _estimate_log_sigma(series: Sequence[Mapping[str, Any]], fallback_roas: float) -> float:
+        ratios = [
+            float(pt["pipeline_value"]) / float(pt["spend"])
+            for pt in series
+            if float(pt.get("spend", 0.0)) > 0.0 and float(pt.get("pipeline_value", 0.0)) > 0.0
+        ]
+        if len(ratios) < 3:
+            return 0.18
+        logs = [math.log(max(0.05, r)) for r in ratios]
+        mean_log = sum(logs) / len(logs)
+        var = sum((x - mean_log) ** 2 for x in logs) / max(1, len(logs) - 1)
+        return max(0.05, min(0.45, math.sqrt(var)))
+
+    from_sigma = _estimate_log_sigma(spec.get("fromSeries") or (), from_mean_roas)
+    to_sigma = _estimate_log_sigma(spec.get("toSeries") or (), to_mean_roas)
+
+    # Hill diminishing-returns saturation on the destination campaign's budget expansion.
+    budget_ratio = (to_budget + shift) / max(to_budget, 1.0)
+    alpha = 0.22
+    gamma = 1.35
+    saturation_factor = 1.0 / (1.0 + alpha * (max(0.0, budget_ratio - 1.0) ** gamma))
+    target_saturation_drag_pct = round((1.0 - saturation_factor) * 100.0, 1)
+
+    other_daily_pipeline = max(
+        0.0,
+        portfolio_budget * portfolio_roas
+        - (from_budget * from_mean_roas + to_budget * to_mean_roas),
+    )
+
+    rng = random.Random(seed)
+    from_mu = math.log(from_mean_roas) - 0.5 * (from_sigma ** 2)
+    to_mu = math.log(to_mean_roas) - 0.5 * (to_sigma ** 2)
+    horizon_scale = 1.0 / math.sqrt(max(1, horizon_days))
+    eff_from_sigma = from_sigma * horizon_scale
+    eff_to_sigma = to_sigma * horizon_scale
+    eff_from_mu = math.log(from_mean_roas) - 0.5 * (eff_from_sigma ** 2)
+    eff_to_mu = math.log(to_mean_roas) - 0.5 * (eff_to_sigma ** 2)
+    _ = (from_mu, to_mu)
+
+    deltas: list[float] = []
+    roas_samples: list[float] = []
+    positive_count = 0
+
+    for _i in range(trials):
+        r_from = math.exp(rng.gauss(eff_from_mu, eff_from_sigma))
+        r_to = math.exp(rng.gauss(eff_to_mu, eff_to_sigma))
+
+        base_daily = from_budget * r_from + to_budget * r_to
+        after_daily = (
+            max(0.0, from_budget - shift) * r_from
+            + to_budget * r_to
+            + shift * r_to * saturation_factor
+        )
+        delta_30d = (after_daily - base_daily) * horizon_days
+        if delta_30d > 0.0:
+            positive_count += 1
+        deltas.append(delta_30d)
+        total_after_daily = other_daily_pipeline + after_daily
+        roas_samples.append(total_after_daily / max(portfolio_budget, 1.0))
+
+    deltas.sort()
+    roas_samples.sort()
+
+    def _pct(sorted_vals: list[float], p: float) -> float:
+        idx = min(len(sorted_vals) - 1, max(0, int(round(p * (len(sorted_vals) - 1)))))
+        return sorted_vals[idx]
+
+    return {
+        "trials": trials,
+        "horizonDays": horizon_days,
+        "incrementalPipelineP10": round(_pct(deltas, 0.10), 2),
+        "incrementalPipelineP50": round(_pct(deltas, 0.50), 2),
+        "incrementalPipelineP90": round(_pct(deltas, 0.90), 2),
+        "blendedRoasP10": round(_pct(roas_samples, 0.10), 2),
+        "blendedRoasP50": round(_pct(roas_samples, 0.50), 2),
+        "blendedRoasP90": round(_pct(roas_samples, 0.90), 2),
+        "probabilityOfPositiveLiftPct": round((positive_count / max(1, trials)) * 100.0, 1),
+        "targetSaturationDragPct": target_saturation_drag_pct,
+    }
+
+
+def build_monte_carlo_script(spec: Mapping[str, Any]) -> str:
+    """Build self-contained Python stdlib Monte Carlo job for Vercel Sandbox."""
+    spec_json = json.dumps(dict(spec), separators=(",", ":"), allow_nan=False)
+    return (
+        "import json, math, random\n\n"
+        f"SPEC = json.loads({spec_json!r})\n\n"
+        "def _estimate_sigma(series):\n"
+        "    ratios = [float(p['pipeline_value']) / float(p['spend']) for p in series "
+        "if float(p.get('spend', 0.0)) > 0.0 and float(p.get('pipeline_value', 0.0)) > 0.0]\n"
+        "    if len(ratios) < 3:\n"
+        "        return 0.18\n"
+        "    logs = [math.log(max(0.05, r)) for r in ratios]\n"
+        "    mean_log = sum(logs) / len(logs)\n"
+        "    var = sum((x - mean_log) ** 2 for x in logs) / max(1, len(logs) - 1)\n"
+        "    return max(0.05, min(0.45, math.sqrt(var)))\n\n"
+        "def main():\n"
+        "    fb = float(SPEC['fromDailyBudget'])\n"
+        "    tb = float(SPEC['toDailyBudget'])\n"
+        "    sh = float(SPEC['amountPerDay'])\n"
+        "    pb = float(SPEC['portfolioDailyBudget'])\n"
+        "    pr = float(SPEC['portfolioBlendedRoas'])\n"
+        "    fr = max(0.05, float(SPEC['fromRoas']))\n"
+        "    tr = max(0.05, float(SPEC['toRoas']))\n"
+        "    trials = int(SPEC.get('trials', 2000))\n"
+        "    days = int(SPEC.get('horizonDays', 30))\n"
+        "    seed = int(SPEC.get('seed', 42))\n"
+        "    fs = _estimate_sigma(SPEC.get('fromSeries') or [])\n"
+        "    ts = _estimate_sigma(SPEC.get('toSeries') or [])\n"
+        "    ratio = (tb + sh) / max(tb, 1.0)\n"
+        "    sat = 1.0 / (1.0 + 0.22 * (max(0.0, ratio - 1.0) ** 1.35))\n"
+        "    drag = round((1.0 - sat) * 100.0, 1)\n"
+        "    other = max(0.0, pb * pr - (fb * fr + tb * tr))\n"
+        "    rng = random.Random(seed)\n"
+        "    scale = 1.0 / math.sqrt(max(1, days))\n"
+        "    efs, ets = fs * scale, ts * scale\n"
+        "    efm = math.log(fr) - 0.5 * (efs ** 2)\n"
+        "    etm = math.log(tr) - 0.5 * (ets ** 2)\n"
+        "    deltas, roas_list, pos = [], [], 0\n"
+        "    for _ in range(trials):\n"
+        "        rf = math.exp(rng.gauss(efm, efs))\n"
+        "        rt = math.exp(rng.gauss(etm, ets))\n"
+        "        base_d = fb * rf + tb * rt\n"
+        "        after_d = max(0.0, fb - sh) * rf + tb * rt + sh * rt * sat\n"
+        "        d30 = (after_d - base_d) * days\n"
+        "        if d30 > 0.0:\n"
+        "            pos += 1\n"
+        "        deltas.append(d30)\n"
+        "        roas_list.append((other + after_d) / max(pb, 1.0))\n"
+        "    deltas.sort()\n"
+        "    roas_list.sort()\n"
+        "    def pct(arr, p):\n"
+        "        return arr[min(len(arr) - 1, max(0, int(round(p * (len(arr) - 1)))))]\n"
+        "    print(json.dumps({\n"
+        "        'trials': trials,\n"
+        "        'horizonDays': days,\n"
+        "        'incrementalPipelineP10': round(pct(deltas, 0.10), 2),\n"
+        "        'incrementalPipelineP50': round(pct(deltas, 0.50), 2),\n"
+        "        'incrementalPipelineP90': round(pct(deltas, 0.90), 2),\n"
+        "        'blendedRoasP10': round(pct(roas_list, 0.10), 2),\n"
+        "        'blendedRoasP50': round(pct(roas_list, 0.50), 2),\n"
+        "        'blendedRoasP90': round(pct(roas_list, 0.90), 2),\n"
+        "        'probabilityOfPositiveLiftPct': round((pos / max(1, trials)) * 100.0, 1),\n"
+        "        'targetSaturationDragPct': drag,\n"
+        "    }, separators=(',', ':'), allow_nan=False))\n\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+
+async def run_monte_carlo_reallocation_in_sandbox(
+    *,
+    from_campaign: str,
+    to_campaign: str,
+    from_daily_budget: float,
+    to_daily_budget: float,
+    from_roas: float,
+    to_roas: float,
+    amount_per_day: float,
+    portfolio_daily_budget: float,
+    portfolio_blended_roas: float,
+    campaign_series: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    data_dir: Path | None = None,
+    trials: int = 2000,
+    horizon_days: int = 30,
+    seed: int = 42,
+    prefer_in_process: bool = False,
+) -> MonteCarloSimulationResult:
+    """Run a 2,000-trial Monte Carlo budget reallocation simulation in @vercel/sandbox."""
+    if campaign_series is None:
+        csv_text = get_rows_csv_text(data_dir)
+        series_map = _extract_campaign_series_from_csv(csv_text, [from_campaign, to_campaign])
+    else:
+        series_map = {k: list(v) for k, v in campaign_series.items()}
+
+    spec = {
+        "fromCampaign": from_campaign,
+        "toCampaign": to_campaign,
+        "fromDailyBudget": from_daily_budget,
+        "toDailyBudget": to_daily_budget,
+        "fromRoas": from_roas,
+        "toRoas": to_roas,
+        "amountPerDay": amount_per_day,
+        "portfolioDailyBudget": portfolio_daily_budget,
+        "portfolioBlendedRoas": portfolio_blended_roas,
+        "fromSeries": series_map.get(from_campaign, []),
+        "toSeries": series_map.get(to_campaign, []),
+        "trials": trials,
+        "horizonDays": horizon_days,
+        "seed": seed,
+    }
+
+    t0 = time.perf_counter()
+    parsed: Mapping[str, Any] | None = None
+    mode: Literal["sandbox", "in-process"] = "in-process"
+
+    can_launch_sandbox = False
+    if not prefer_in_process and not is_sandbox_disabled():
+        budget = _request_sandbox_budget.get()
+        if budget is None:
+            budget = _RequestSandboxBudget()
+            _request_sandbox_budget.set(budget)
+        if budget.count < MAX_SANDBOXES_PER_REQUEST:
+            budget.count += 1
+            can_launch_sandbox = True
+
+    if can_launch_sandbox:
+        try:
+            job_source = build_monte_carlo_script(spec)
+            with anyio.fail_after(SANDBOX_TIMEOUT_SECONDS):
+                async with sandbox.create_sandbox(
+                    network_policy=NetworkPolicy.deny_all(),
+                    execution_time_limit=SANDBOX_TIMEOUT_SECONDS,
+                    persistent=False,
+                ) as box:
+                    await box.fs.write_text("simulate.py", job_source)
+                    result = await box.run_command(
+                        "python",
+                        ["simulate.py"],
+                        capture_output=True,
+                        check=True,
+                        kill_after=SANDBOX_KILL_AFTER_SECONDS,
+                    )
+                    raw_out = result.stdout
+                    out_text = (
+                        raw_out.decode("utf-8")
+                        if isinstance(raw_out, (bytes, bytearray))
+                        else str(raw_out or "")
+                    )
+                    candidate = json.loads(out_text)
+                    if isinstance(candidate, Mapping) and "incrementalPipelineP50" in candidate:
+                        parsed = candidate
+                        mode = "sandbox"
+        except Exception:
+            parsed = None
+            mode = "in-process"
+
+    if parsed is None:
+        parsed = run_monte_carlo_in_process(spec)
+        mode = "in-process"
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    return MonteCarloSimulationResult(
+        mode=mode,
+        trials=int(parsed["trials"]),
+        horizonDays=int(parsed["horizonDays"]),
+        sandboxMs=elapsed_ms,
+        incrementalPipelineP10=float(parsed["incrementalPipelineP10"]),
+        incrementalPipelineP50=float(parsed["incrementalPipelineP50"]),
+        incrementalPipelineP90=float(parsed["incrementalPipelineP90"]),
+        blendedRoasP10=float(parsed["blendedRoasP10"]),
+        blendedRoasP50=float(parsed["blendedRoasP50"]),
+        blendedRoasP90=float(parsed["blendedRoasP90"]),
+        probabilityOfPositiveLiftPct=float(parsed["probabilityOfPositiveLiftPct"]),
+        targetSaturationDragPct=float(parsed["targetSaturationDragPct"]),
     )

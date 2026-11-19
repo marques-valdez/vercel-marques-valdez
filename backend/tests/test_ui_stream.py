@@ -759,10 +759,10 @@ def test_golden_sse_single_tool_turn_with_pre_text_and_all_four_tools(
         "text-end",
         "tool-input-available",
     ]
-    if tool_name == "analyze_in_sandbox":
+    if tool_name in ("analyze_in_sandbox", "propose_budget_reallocation"):
         expected_types.extend(["data-sandbox-status", "data-sandbox-status"])
     expected_types.append("tool-output-available")
-    if tool_name == "analyze_in_sandbox":
+    if tool_name in ("analyze_in_sandbox", "propose_budget_reallocation"):
         expected_types.append("data-sandbox-status")
     expected_types.extend(
         [

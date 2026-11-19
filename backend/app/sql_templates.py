@@ -140,32 +140,39 @@ def _validate_limit(value: Any) -> int:
     return value
 
 
+SqlDialect = Literal["sqlite", "postgres"]
+
+
 def _build_where_clause(
     raw_params: Mapping[str, Any],
+    *,
+    dialect: SqlDialect = "sqlite",
 ) -> tuple[str, list[Any]]:
+    placeholder = "%s" if dialect == "postgres" else "?"
+    table_name = "relay_daily_performance" if dialect == "postgres" else "rows"
     clauses: list[str] = []
     bound: list[Any] = []
 
     channel_name = normalize_channel_filter(raw_params.get("channel"))
     if channel_name is not None:
-        clauses.append("channel = ?")
+        clauses.append(f"channel = {placeholder}")
         bound.append(channel_name)
 
     campaign_id = raw_params.get("campaign_id")
     if campaign_id is not None:
         if not isinstance(campaign_id, str) or not _CAMPAIGN_ID_RE.match(campaign_id.strip()):
             raise ValueError("campaign_id must be an alphanumeric identifier")
-        clauses.append("campaign_id = ?")
+        clauses.append(f"campaign_id = {placeholder}")
         bound.append(campaign_id.strip())
 
     start_date = raw_params.get("start_date")
     if start_date is not None:
-        clauses.append("date >= ?")
+        clauses.append(f"date >= {placeholder}")
         bound.append(_validate_iso_date(start_date, "start_date"))
 
     end_date = raw_params.get("end_date")
     if end_date is not None:
-        clauses.append("date <= ?")
+        clauses.append(f"date <= {placeholder}")
         bound.append(_validate_iso_date(end_date, "end_date"))
 
     days = raw_params.get("days")
@@ -175,7 +182,7 @@ def _build_where_clause(
         if days < 1 or days > MAX_DAYS_WINDOW:
             raise ValueError(f"days must be between 1 and {MAX_DAYS_WINDOW}")
         clauses.append(
-            "date IN (SELECT DISTINCT date FROM rows ORDER BY date DESC LIMIT ?)"
+            f"date IN (SELECT DISTINCT date FROM {table_name} ORDER BY date DESC LIMIT {placeholder})"
         )
         bound.append(days)
 
@@ -184,11 +191,19 @@ def _build_where_clause(
     return "WHERE " + " AND ".join(clauses) + "\n", bound
 
 
+def _round_expr(expr: str, dialect: SqlDialect) -> str:
+    if dialect == "postgres":
+        return f"ROUND(({expr})::numeric, 2)::double precision"
+    return f"ROUND({expr}, 2)"
+
+
 def compile_sql_template(
     template_id: str = "channel_roas_summary",
     params: Mapping[str, Any] | None = None,
+    *,
+    dialect: SqlDialect = "sqlite",
 ) -> CompiledSqlQuery:
-    """Compile a fixed parameterized SQLite query template with bound ? placeholders."""
+    """Compile a fixed parameterized SQL query template for SQLite (?) or Postgres (%s)."""
     resolved_id = normalize_template_id(template_id)
     raw_params: Mapping[str, Any] = params if params is not None else {}
     if not isinstance(raw_params, Mapping):
@@ -204,9 +219,12 @@ def compile_sql_template(
         raise ValueError("zero_conversions_only must be a boolean")
 
     limit_val = _validate_limit(raw_params.get("limit", DEFAULT_ROW_LIMIT))
+    placeholder = "%s" if dialect == "postgres" else "?"
+    table_name = "relay_daily_performance" if dialect == "postgres" else "rows"
+    date_select = "d.date::text AS date" if dialect == "postgres" else "d.date AS date"
 
     if resolved_id == "channel_roas_summary":
-        where_sql, bound = _build_where_clause(raw_params)
+        where_sql, bound = _build_where_clause(raw_params, dialect=dialect)
         bound.append(limit_val)
         sql = (
             "SELECT\n"
@@ -214,23 +232,23 @@ def compile_sql_template(
             "  COUNT(DISTINCT campaign_id) AS campaigns,\n"
             "  COUNT(DISTINCT ad_group_id) AS ad_groups,\n"
             "  COUNT(*) AS row_count,\n"
-            "  ROUND(SUM(spend), 2) AS total_spend,\n"
+            f"  {_round_expr('SUM(spend)', dialect)} AS total_spend,\n"
             "  SUM(clicks) AS total_clicks,\n"
             "  SUM(conversions) AS total_conversions,\n"
-            "  ROUND(SUM(pipeline_value), 2) AS total_pipeline_value,\n"
-            "  COALESCE(ROUND(SUM(pipeline_value) / NULLIF(SUM(spend), 0), 2), 0.0) AS roas,\n"
-            "  COALESCE(ROUND(SUM(spend) / NULLIF(SUM(clicks), 0), 2), 0.0) AS cpc,\n"
-            "  ROUND(SUM(spend) / NULLIF(SUM(conversions), 0), 2) AS cpa\n"
-            "FROM rows\n"
+            f"  {_round_expr('SUM(pipeline_value)', dialect)} AS total_pipeline_value,\n"
+            f"  COALESCE({_round_expr('SUM(pipeline_value) / NULLIF(SUM(spend), 0)', dialect)}, 0.0) AS roas,\n"
+            f"  COALESCE({_round_expr('SUM(spend) / NULLIF(SUM(clicks), 0)', dialect)}, 0.0) AS cpc,\n"
+            f"  {_round_expr('SUM(spend) / NULLIF(SUM(conversions), 0)', dialect)} AS cpa\n"
+            f"FROM {table_name}\n"
             f"{where_sql}"
             "GROUP BY channel\n"
             "ORDER BY roas DESC, channel ASC\n"
-            "LIMIT ?;"
+            f"LIMIT {placeholder};"
         )
         return CompiledSqlQuery(template_id=resolved_id, sql=sql, params=tuple(bound))
 
     if resolved_id == "campaign_roas_ranking":
-        where_sql, bound = _build_where_clause(raw_params)
+        where_sql, bound = _build_where_clause(raw_params, dialect=dialect)
         bound.append(limit_val)
         sql = (
             "SELECT\n"
@@ -238,22 +256,22 @@ def compile_sql_template(
             "  channel,\n"
             "  COUNT(DISTINCT ad_group_id) AS ad_groups,\n"
             "  COUNT(DISTINCT date) AS active_days,\n"
-            "  ROUND(SUM(spend), 2) AS total_spend,\n"
+            f"  {_round_expr('SUM(spend)', dialect)} AS total_spend,\n"
             "  SUM(clicks) AS total_clicks,\n"
             "  SUM(conversions) AS total_conversions,\n"
-            "  ROUND(SUM(pipeline_value), 2) AS total_pipeline_value,\n"
-            "  COALESCE(ROUND(SUM(pipeline_value) / NULLIF(SUM(spend), 0), 2), 0.0) AS roas,\n"
-            "  ROUND(SUM(spend) / NULLIF(SUM(conversions), 0), 2) AS cpa\n"
-            "FROM rows\n"
+            f"  {_round_expr('SUM(pipeline_value)', dialect)} AS total_pipeline_value,\n"
+            f"  COALESCE({_round_expr('SUM(pipeline_value) / NULLIF(SUM(spend), 0)', dialect)}, 0.0) AS roas,\n"
+            f"  {_round_expr('SUM(spend) / NULLIF(SUM(conversions), 0)', dialect)} AS cpa\n"
+            f"FROM {table_name}\n"
             f"{where_sql}"
             "GROUP BY campaign_id, channel\n"
             f"ORDER BY roas {sort_sql}, campaign_id ASC\n"
-            "LIMIT ?;"
+            f"LIMIT {placeholder};"
         )
         return CompiledSqlQuery(template_id=resolved_id, sql=sql, params=tuple(bound))
 
     if resolved_id == "daily_pacing_anomalies":
-        where_sql, bound = _build_where_clause(raw_params)
+        where_sql, bound = _build_where_clause(raw_params, dialect=dialect)
         indented_where = (
             "  " + where_sql.replace("\n", "\n  ").rstrip(" ") if where_sql else ""
         )
@@ -263,40 +281,40 @@ def compile_sql_template(
             "  SELECT\n"
             "    date,\n"
             "    channel,\n"
-            "    ROUND(SUM(spend), 2) AS total_spend,\n"
+            f"    {_round_expr('SUM(spend)', dialect)} AS total_spend,\n"
             "    SUM(clicks) AS total_clicks,\n"
             "    SUM(conversions) AS total_conversions,\n"
-            "    ROUND(SUM(pipeline_value), 2) AS total_pipeline_value,\n"
-            "    COALESCE(ROUND(SUM(pipeline_value) / NULLIF(SUM(spend), 0), 2), 0.0) AS roas\n"
-            "  FROM rows\n"
+            f"    {_round_expr('SUM(pipeline_value)', dialect)} AS total_pipeline_value,\n"
+            f"    COALESCE({_round_expr('SUM(pipeline_value) / NULLIF(SUM(spend), 0)', dialect)}, 0.0) AS roas\n"
+            f"  FROM {table_name}\n"
             f"{indented_where}"
             "  GROUP BY date, channel\n"
             "),\n"
             "channel_baseline AS (\n"
             "  SELECT\n"
             "    channel,\n"
-            "    ROUND(AVG(total_spend), 2) AS avg_daily_spend\n"
+            f"    {_round_expr('AVG(total_spend)', dialect)} AS avg_daily_spend\n"
             "  FROM daily_channel\n"
             "  GROUP BY channel\n"
             ")\n"
             "SELECT\n"
-            "  d.date AS date,\n"
+            f"  {date_select},\n"
             "  d.channel AS channel,\n"
             "  d.total_spend AS total_spend,\n"
             "  b.avg_daily_spend AS avg_daily_spend,\n"
-            "  COALESCE(ROUND(((d.total_spend - b.avg_daily_spend) / NULLIF(b.avg_daily_spend, 0)) * 100.0, 2), 0.0) AS spend_delta_pct,\n"
+            f"  COALESCE({_round_expr('((d.total_spend - b.avg_daily_spend) / NULLIF(b.avg_daily_spend, 0)) * 100.0', dialect)}, 0.0) AS spend_delta_pct,\n"
             "  d.total_clicks AS total_clicks,\n"
             "  d.total_conversions AS total_conversions,\n"
             "  d.total_pipeline_value AS total_pipeline_value,\n"
             "  d.roas AS roas\n"
             "FROM daily_channel AS d\n"
             "JOIN channel_baseline AS b ON d.channel = b.channel\n"
-            "ORDER BY ROUND(ABS(d.total_spend - b.avg_daily_spend), 2) DESC, d.date DESC, d.channel ASC\n"
-            "LIMIT ?;"
+            f"ORDER BY {_round_expr('ABS(d.total_spend - b.avg_daily_spend)', dialect)} DESC, d.date DESC, d.channel ASC\n"
+            f"LIMIT {placeholder};"
         )
         return CompiledSqlQuery(template_id=resolved_id, sql=sql, params=tuple(bound))
 
-    where_sql, bound = _build_where_clause(raw_params)
+    where_sql, bound = _build_where_clause(raw_params, dialect=dialect)
     having_sql = "HAVING SUM(conversions) = 0\n" if zero_only else ""
     bound.append(limit_val)
     sql = (
@@ -304,17 +322,17 @@ def compile_sql_template(
         "  ad_group_id,\n"
         "  campaign_id,\n"
         "  channel,\n"
-        "  ROUND(SUM(spend), 2) AS total_spend,\n"
+        f"  {_round_expr('SUM(spend)', dialect)} AS total_spend,\n"
         "  SUM(clicks) AS total_clicks,\n"
         "  SUM(conversions) AS total_conversions,\n"
-        "  ROUND(SUM(pipeline_value), 2) AS total_pipeline_value,\n"
-        "  COALESCE(ROUND(SUM(pipeline_value) / NULLIF(SUM(spend), 0), 2), 0.0) AS roas,\n"
-        "  ROUND(SUM(spend) / NULLIF(SUM(conversions), 0), 2) AS cpa\n"
-        "FROM rows\n"
+        f"  {_round_expr('SUM(pipeline_value)', dialect)} AS total_pipeline_value,\n"
+        f"  COALESCE({_round_expr('SUM(pipeline_value) / NULLIF(SUM(spend), 0)', dialect)}, 0.0) AS roas,\n"
+        f"  {_round_expr('SUM(spend) / NULLIF(SUM(conversions), 0)', dialect)} AS cpa\n"
+        f"FROM {table_name}\n"
         f"{where_sql}"
         "GROUP BY ad_group_id, campaign_id, channel\n"
         f"{having_sql}"
         "ORDER BY total_conversions ASC, total_spend DESC, ad_group_id ASC\n"
-        "LIMIT ?;"
+        f"LIMIT {placeholder};"
     )
     return CompiledSqlQuery(template_id=resolved_id, sql=sql, params=tuple(bound))
