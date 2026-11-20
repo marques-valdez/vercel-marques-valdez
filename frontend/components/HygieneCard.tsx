@@ -8,7 +8,7 @@
  * the visitor's Digital Twin mutation log without requiring an extra LLM turn.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { DerivedTwinState, HygieneIssue, HygieneToolOutput } from '@/lib/types';
 import {
   BarRow,
@@ -48,6 +48,19 @@ export function HygieneCard({
     'all' | 'broken_404' | 'utm_violation'
   >('all');
   const [showAllRows, setShowAllRows] = useState(false);
+
+  const hasOpenTwinIssues = Boolean(
+    twinState &&
+      output &&
+      (Math.min(output.brokenCount, twinState.totals.brokenCreatives) > 0 ||
+        Math.min(output.utmCount, twinState.totals.utmViolations) > 0),
+  );
+
+  useEffect(() => {
+    if (hasOpenTwinIssues && appliedLocal) {
+      setAppliedLocal(false);
+    }
+  }, [hasOpenTwinIssues, appliedLocal]);
 
   if (state === 'skeleton') {
     return (
@@ -173,7 +186,11 @@ export function HygieneCard({
                 : 'pill pill-danger'
             }
           >
-            {`$${formatMoney(output.totalSpendAtRiskPerDay)}/day wasted or untagged`}
+            {isRemediated
+              ? output.totalSpendAtRiskPerDay > 0
+                ? `✓ $${formatMoney(output.totalSpendAtRiskPerDay)}/day protected · 0 open issues`
+                : '✓ 0 open link or UTM issues'
+              : `$${formatMoney(output.totalSpendAtRiskPerDay)}/day wasted or untagged`}
           </span>
         </div>
       </div>
@@ -292,8 +309,14 @@ export function HygieneCard({
                 {visibleItems.map((item) => {
                   const tone = resolveChannelTone(item.channel);
                   const isBroken = item.issueType === 'broken_404';
+                  const isRowResolved =
+                    appliedLocal ||
+                    (isBroken ? displayBrokenCount === 0 : displayUtmCount === 0);
                   return (
-                    <tr key={item.issueId}>
+                    <tr
+                      key={item.issueId}
+                      className={isRowResolved ? 'hygiene-row-resolved' : undefined}
+                    >
                       <td>
                         <span className="pill channel-pill">
                           <span
@@ -310,17 +333,40 @@ export function HygieneCard({
                       <td>
                         <span
                           className={
-                            isBroken ? 'pill pill-danger' : 'pill pill-amber'
+                            isRowResolved
+                              ? 'pill pill-green'
+                              : isBroken
+                                ? 'pill pill-danger'
+                                : 'pill pill-amber'
                           }
                         >
-                          {isBroken ? 'Broken 404 link' : 'UTM tag issue'}
+                          {isRowResolved
+                            ? isBroken
+                              ? '✓ Ad paused'
+                              : '✓ UTM repaired'
+                            : isBroken
+                              ? 'Broken 404 link'
+                              : 'UTM tag issue'}
                         </span>
                       </td>
                       <td className="mono-text cell-truncate" title={item.value}>
                         {item.value}
                       </td>
-                      <td className="num metric-danger-cell">
-                        ${formatMoney(item.dailySpendAtRisk)}
+                      <td
+                        className={
+                          isRowResolved
+                            ? 'num metric-resolved-cell'
+                            : 'num metric-danger-cell'
+                        }
+                        title={
+                          isRowResolved
+                            ? `Protected $${formatMoney(item.dailySpendAtRisk)}/day`
+                            : undefined
+                        }
+                      >
+                        {isRowResolved
+                          ? '$0.00'
+                          : `$${formatMoney(item.dailySpendAtRisk)}`}
                       </td>
                     </tr>
                   );
@@ -374,7 +420,11 @@ export function HygieneCard({
             onClick={() => void handleApplyClick()}
             data-testid="hygiene-fix-button"
           >
-            {`Fix ${displayUtmCount} UTM tags & pause ${displayBrokenCount} broken ads`}
+            {displayUtmCount > 0 && displayBrokenCount > 0
+              ? `Fix ${displayUtmCount} UTM tags & pause ${displayBrokenCount} broken ads`
+              : displayBrokenCount > 0
+                ? `Pause ${displayBrokenCount} broken ads`
+                : `Fix ${displayUtmCount} UTM tags`}
           </button>
         )}
       </div>

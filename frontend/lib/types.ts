@@ -386,3 +386,13 @@ export interface FollowUpChip {
   tierHint: 'fast' | 'reasoning';
   tone: 'blue' | 'green' | 'amber' | 'violet';
 }
+
+export interface ImpactToastData {
+  id: string;
+  title: string;
+  detail: string;
+  tone: 'green' | 'blue' | 'amber';
+  undoSnapshot?: Mutation[];
+}
+
+export type DemoStepId = 'sandbox' | 'xray' | 'failover' | 'og';

@@ -196,6 +196,48 @@ export async function appendTwinMutations(
   }
 }
 
+export async function replaceTwinMutations(
+  nextMutations: Mutation[],
+): Promise<{ mutations: Mutation[]; state: DerivedTwinState }> {
+  if (!Array.isArray(nextMutations) || !nextMutations.every(isValidMutation)) {
+    throw new TwinStateError('Invalid twin mutation payload.', 422);
+  }
+  if (nextMutations.length > MAX_TWIN_MUTATIONS) {
+    throw new TwinStateError(
+      `Mutation log cap (${MAX_TWIN_MUTATIONS}) reached. Open Inspector and select Reset demo to continue.`,
+      422,
+    );
+  }
+
+  const previous = readStoredMutations();
+  try {
+    const state = await fetchTwinState(nextMutations);
+    writeStoredMutations(nextMutations);
+    return { mutations: nextMutations, state };
+  } catch (err) {
+    writeStoredMutations(previous);
+    throw err;
+  }
+}
+
+export async function removeTwinMutationAt(
+  index: number,
+): Promise<{
+  mutations: Mutation[];
+  state: DerivedTwinState;
+  removed: Mutation | null;
+}> {
+  const current = readStoredMutations();
+  if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+    const state = await fetchTwinState(current);
+    return { mutations: current, state, removed: null };
+  }
+  const removed = current[index] ?? null;
+  const next = current.filter((_, idx) => idx !== index);
+  const res = await replaceTwinMutations(next);
+  return { ...res, removed };
+}
+
 export async function resetTwinMutations(): Promise<DerivedTwinState> {
   clearStoredMutations();
   return fetchTwinState([]);

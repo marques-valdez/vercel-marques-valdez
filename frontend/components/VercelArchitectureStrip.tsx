@@ -10,15 +10,16 @@
  */
 
 import React, { useState } from 'react';
-import type { HealthStatus, PlaybookId } from '@/lib/types';
+import type { DemoStepId, HealthStatus, PlaybookId } from '@/lib/types';
 
 interface VercelArchitectureStripProps {
   health: HealthStatus | null;
   healthPingMs: number | null;
   injectFailure: boolean;
   isStreaming: boolean;
+  completedSteps?: Partial<Record<DemoStepId, boolean>>;
   onToggleInjectFailure: (next: boolean) => void;
-  onRunDemoStep: (step: 'sandbox' | 'xray' | 'failover' | 'og') => void;
+  onRunDemoStep: (step: DemoStepId) => void;
   onOpenInspector: (tab: 'runtime' | 'adapter' | 'deployment') => void;
 }
 
@@ -63,11 +64,19 @@ export function VercelArchitectureStrip({
   healthPingMs,
   injectFailure,
   isStreaming,
+  completedSteps,
   onToggleInjectFailure,
   onRunDemoStep,
   onOpenInspector,
 }: VercelArchitectureStripProps) {
   const [tourOpen, setTourOpen] = useState(false);
+
+  const completedCount = DEMO_STEPS.filter((s) =>
+    Boolean(completedSteps?.[s.id]),
+  ).length;
+  const firstIncompleteId =
+    DEMO_STEPS.find((s) => !completedSteps?.[s.id])?.id ?? null;
+  const tourBadgeSuffix = completedCount > 0 ? ` (${completedCount}/4 ✓)` : '';
 
   const pythonLabel = health?.pythonVersion
     ? `Python ${health.pythonVersion}`
@@ -142,12 +151,14 @@ export function VercelArchitectureStrip({
 
           <button
             type="button"
-            className={tourOpen ? 'btn-chip btn-chip-active' : 'btn-chip'}
+            className={tourOpen ? 'btn-chip btn-chip-active tabular-nums' : 'btn-chip tabular-nums'}
             aria-expanded={tourOpen}
             onClick={() => setTourOpen((prev) => !prev)}
             data-testid="demo-tour-toggle"
           >
-            {tourOpen ? 'Hide 4-step tour' : '4-step demo tour'}
+            {tourOpen
+              ? `Hide 4-step tour${tourBadgeSuffix}`
+              : `4-step demo tour${tourBadgeSuffix}`}
           </button>
         </div>
       </div>
@@ -159,21 +170,33 @@ export function VercelArchitectureStrip({
           aria-label="Four-step Vercel component tour"
           data-testid="demo-tour-bar"
         >
-          {DEMO_STEPS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="demo-tour-step"
-              disabled={isStreaming && item.id !== 'og'}
-              onClick={() => onRunDemoStep(item.id)}
-              data-testid={`demo-tour-step-${item.id}`}
-            >
-              <span className="demo-tour-eyebrow mono-text">
-                {`${item.stepNum}. ${item.primitive}`}
-              </span>
-              <span className="demo-tour-label">{item.label}</span>
-            </button>
-          ))}
+          {DEMO_STEPS.map((item) => {
+            const isStepDone = Boolean(completedSteps?.[item.id]);
+            const isStepNext = !isStepDone && firstIncompleteId === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`demo-tour-step${
+                  isStepDone ? ' demo-tour-step-done' : ''
+                }${isStepNext ? ' demo-tour-step-next' : ''}`}
+                disabled={isStreaming && item.id !== 'og'}
+                onClick={() => onRunDemoStep(item.id)}
+                data-testid={`demo-tour-step-${item.id}`}
+                data-completed={isStepDone ? 'true' : 'false'}
+              >
+                <span className="demo-tour-eyebrow mono-text">
+                  <span>{`${item.stepNum}. ${item.primitive}`}</span>
+                  {isStepDone ? (
+                    <span className="demo-tour-check" aria-label="Completed">
+                      ✓
+                    </span>
+                  ) : null}
+                </span>
+                <span className="demo-tour-label">{item.label}</span>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </section>

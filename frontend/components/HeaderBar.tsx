@@ -18,9 +18,12 @@ interface HeaderBarProps {
   inspectorOpen?: boolean;
   architectMode?: boolean;
   hasConversation?: boolean;
+  appliedMutationsCount?: number;
+  changesOpen?: boolean;
   workflowCount?: number;
   workflowsOpen?: boolean;
   onOpenShare: () => void;
+  onToggleChanges?: () => void;
   onToggleWorkflows?: () => void;
   onToggleInspector?: () => void;
   onToggleArchitectMode?: () => void;
@@ -32,9 +35,12 @@ export function HeaderBar({
   inspectorOpen = false,
   architectMode = false,
   hasConversation = false,
+  appliedMutationsCount = 0,
+  changesOpen = false,
   workflowCount = 0,
   workflowsOpen = false,
   onOpenShare,
+  onToggleChanges,
   onToggleWorkflows,
   onToggleInspector,
   onToggleArchitectMode,
@@ -81,6 +87,20 @@ export function HeaderBar({
         </div>
 
         <div className="header-right">
+          {onToggleChanges && appliedMutationsCount > 0 ? (
+            <button
+              type="button"
+              className={`btn-chip tabular-nums header-changes-chip${
+                changesOpen ? ' btn-chip-active' : ''
+              }`}
+              aria-expanded={changesOpen}
+              aria-controls="changes-popover"
+              onClick={onToggleChanges}
+              data-testid="header-changes-button"
+            >
+              {`Changes (${appliedMutationsCount})`}
+            </button>
+          ) : null}
           {hasChanges && onResetWorkspace ? (
             <button
               type="button"

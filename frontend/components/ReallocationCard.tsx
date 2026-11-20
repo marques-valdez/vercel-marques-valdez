@@ -10,7 +10,11 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { Mutation, ReallocationToolOutput } from '@/lib/types';
+import type {
+  CampaignSummary,
+  Mutation,
+  ReallocationToolOutput,
+} from '@/lib/types';
 import {
   BarRow,
   BeforeAfterBars,
@@ -25,19 +29,37 @@ interface ReallocationCardProps {
   decision: 'approved' | 'declined' | null;
   disabled: boolean;
   architectMode?: boolean;
+  campaigns?: CampaignSummary[];
   getMutations?: () => Mutation[];
   onApprove: (output: ReallocationToolOutput) => Promise<void>;
   onDecline: (output: ReallocationToolOutput) => void;
   onRetry: () => void;
 }
 
+export interface CampaignPairOverride {
+  fromCampaign: CampaignSummary;
+  toCampaign: CampaignSummary;
+}
+
 export function computeClientReallocationPreview(
   base: ReallocationToolOutput,
   requestedAmount: number,
+  overridePair?: CampaignPairOverride | null,
 ): ReallocationToolOutput {
-  const avail = Number.isFinite(base.before.fromDailyBudget)
-    ? Math.max(0, base.before.fromDailyBudget)
-    : 0;
+  const srcBudget = overridePair
+    ? overridePair.fromCampaign.dailyBudget
+    : base.before.fromDailyBudget;
+  const dstBudget = overridePair
+    ? overridePair.toCampaign.dailyBudget
+    : base.before.toDailyBudget;
+  const srcRoas = overridePair
+    ? overridePair.fromCampaign.roas
+    : base.before.fromRoas;
+  const dstRoas = overridePair
+    ? overridePair.toCampaign.roas
+    : base.before.toRoas;
+
+  const avail = Number.isFinite(srcBudget) ? Math.max(0, srcBudget) : 0;
   if (avail <= 0) {
     return base;
   }
@@ -47,7 +69,13 @@ export function computeClientReallocationPreview(
   const clamped = Number(
     Math.max(1, Math.min(avail, safeRequested)).toFixed(2),
   );
-  if (Math.abs(clamped - base.amountPerDay) < 0.005) {
+
+  const isSamePair =
+    !overridePair ||
+    (overridePair.fromCampaign.campaignId === base.fromCampaign &&
+      overridePair.toCampaign.campaignId === base.toCampaign);
+
+  if (isSamePair && Math.abs(clamped - base.amountPerDay) < 0.005) {
     return base;
   }
 
@@ -56,20 +84,45 @@ export function computeClientReallocationPreview(
     base.before.totalDailyBudget > 0
       ? base.before.totalDailyBudget
       : 1;
-  const roasDiff = base.before.toRoas - base.before.fromRoas;
+  const roasDiff = dstRoas - srcRoas;
   const projectedBlended = Number(
     (base.blendedRoasBefore + (clamped * roasDiff) / totalBudget).toFixed(2),
   );
 
   return {
     ...base,
+    fromCampaign: overridePair
+      ? overridePair.fromCampaign.campaignId
+      : base.fromCampaign,
+    fromCampaignName: overridePair
+      ? overridePair.fromCampaign.name
+      : base.fromCampaignName,
+    fromChannel: overridePair
+      ? overridePair.fromCampaign.channel
+      : base.fromChannel,
+    toCampaign: overridePair
+      ? overridePair.toCampaign.campaignId
+      : base.toCampaign,
+    toCampaignName: overridePair
+      ? overridePair.toCampaign.name
+      : base.toCampaignName,
+    toChannel: overridePair
+      ? overridePair.toCampaign.channel
+      : base.toChannel,
     amountPerDay: clamped,
+    before: {
+      fromDailyBudget: srcBudget,
+      toDailyBudget: dstBudget,
+      fromRoas: srcRoas,
+      toRoas: dstRoas,
+      totalDailyBudget: base.before.totalDailyBudget,
+    },
     after: {
-      ...base.after,
-      fromDailyBudget: Number(
-        Math.max(0, base.before.fromDailyBudget - clamped).toFixed(2),
-      ),
-      toDailyBudget: Number((base.before.toDailyBudget + clamped).toFixed(2)),
+      fromDailyBudget: Number(Math.max(0, srcBudget - clamped).toFixed(2)),
+      toDailyBudget: Number((dstBudget + clamped).toFixed(2)),
+      fromRoas: srcRoas,
+      toRoas: dstRoas,
+      totalDailyBudget: base.before.totalDailyBudget,
     },
     blendedRoasAfter: projectedBlended,
   };
@@ -99,6 +152,7 @@ export function ReallocationCard({
   decision = null,
   disabled,
   architectMode = false,
+  campaigns,
   getMutations,
   onApprove,
   onDecline,
@@ -106,6 +160,12 @@ export function ReallocationCard({
 }: ReallocationCardProps) {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [selectedFromId, setSelectedFromId] = useState<string>(
+    output?.fromCampaign ?? '',
+  );
+  const [selectedToId, setSelectedToId] = useState<string>(
+    output?.toCampaign ?? '',
+  );
   const [sliderAmount, setSliderAmount] = useState<number | null>(null);
   const [simulatedOutput, setSimulatedOutput] =
     useState<ReallocationToolOutput | null>(null);
@@ -116,13 +176,17 @@ export function ReallocationCard({
 
   const baseProposalId = output?.proposalId ?? '';
   const baseAmount = output?.amountPerDay ?? 0;
+  const baseFromId = output?.fromCampaign ?? '';
+  const baseToId = output?.toCampaign ?? '';
 
   useEffect(() => {
+    setSelectedFromId(baseFromId);
+    setSelectedToId(baseToId);
     setSliderAmount(null);
     setSimulatedOutput(null);
     setSimUpdating(false);
     setSimError(null);
-  }, [baseProposalId, baseAmount]);
+  }, [baseProposalId, baseAmount, baseFromId, baseToId]);
 
   useEffect(() => {
     return () => {
@@ -135,17 +199,39 @@ export function ReallocationCard({
     };
   }, []);
 
+  const activeFromId = selectedFromId || baseFromId;
+  const activeToId = selectedToId || baseToId;
+
+  const overridePair = useMemo<CampaignPairOverride | null>(() => {
+    if (!output || !campaigns || campaigns.length < 2) {
+      return null;
+    }
+    if (activeFromId === output.fromCampaign && activeToId === output.toCampaign) {
+      return null;
+    }
+    const fromCampaign = campaigns.find((c) => c.campaignId === activeFromId);
+    const toCampaign = campaigns.find((c) => c.campaignId === activeToId);
+    if (!fromCampaign || !toCampaign || fromCampaign.campaignId === toCampaign.campaignId) {
+      return null;
+    }
+    return { fromCampaign, toCampaign };
+  }, [output, campaigns, activeFromId, activeToId]);
+
+  const activeSourceBudget = overridePair
+    ? overridePair.fromCampaign.dailyBudget
+    : (output?.before.fromDailyBudget ?? 0);
+
   const effectiveAmount =
     sliderAmount !== null && output
-      ? Math.max(1, Math.min(output.before.fromDailyBudget, sliderAmount))
-      : baseAmount;
+      ? Math.max(1, Math.min(activeSourceBudget, sliderAmount))
+      : Math.max(1, Math.min(activeSourceBudget || baseAmount, baseAmount));
 
   const clientPreview = useMemo(() => {
     if (!output) {
       return undefined;
     }
-    return computeClientReallocationPreview(output, effectiveAmount);
-  }, [output, effectiveAmount]);
+    return computeClientReallocationPreview(output, effectiveAmount, overridePair);
+  }, [output, effectiveAmount, overridePair]);
 
   const effectiveOutput = useMemo(() => {
     if (!clientPreview) {
@@ -153,12 +239,27 @@ export function ReallocationCard({
     }
     if (
       simulatedOutput &&
+      simulatedOutput.fromCampaign === clientPreview.fromCampaign &&
+      simulatedOutput.toCampaign === clientPreview.toCampaign &&
       Math.abs(simulatedOutput.amountPerDay - clientPreview.amountPerDay) < 0.01
     ) {
       return simulatedOutput;
     }
     return clientPreview;
   }, [clientPreview, simulatedOutput]);
+
+  const groupedCampaigns = useMemo(() => {
+    if (!campaigns || campaigns.length === 0) {
+      return [];
+    }
+    const groups = new Map<string, CampaignSummary[]>();
+    for (const c of campaigns) {
+      const list = groups.get(c.channel) ?? [];
+      list.push(c);
+      groups.set(c.channel, list);
+    }
+    return Array.from(groups.entries());
+  }, [campaigns]);
 
   if (state === 'skeleton') {
     return (
@@ -195,13 +296,21 @@ export function ReallocationCard({
 
   const fromLabel = effectiveOutput.fromCampaignName || effectiveOutput.fromCampaign;
   const toLabel = effectiveOutput.toCampaignName || effectiveOutput.toCampaign;
-  const maxShiftBudget = Math.max(1, Math.floor(output.before.fromDailyBudget));
+  const maxShiftBudget = Math.max(1, Math.floor(activeSourceBudget));
   const minShiftBudget = Math.min(25, maxShiftBudget);
   const canAdjustAmount = decision === null && maxShiftBudget >= 25;
+  const canPickCampaigns =
+    decision === null && Boolean(campaigns && campaigns.length >= 2);
   const isModifiedFromSuggested =
-    Math.abs(effectiveOutput.amountPerDay - output.amountPerDay) >= 0.5;
+    Math.abs(effectiveOutput.amountPerDay - output.amountPerDay) >= 0.5 ||
+    effectiveOutput.fromCampaign !== output.fromCampaign ||
+    effectiveOutput.toCampaign !== output.toCampaign;
 
-  const triggerLiveSimulation = (nextAmount: number) => {
+  const triggerLiveSimulation = (
+    nextAmount: number,
+    nextFromCampaign: string = effectiveOutput.fromCampaign,
+    nextToCampaign: string = effectiveOutput.toCampaign,
+  ) => {
     if (simTimerRef.current) {
       clearTimeout(simTimerRef.current);
       simTimerRef.current = null;
@@ -211,7 +320,11 @@ export function ReallocationCard({
       simAbortRef.current = null;
     }
 
-    if (Math.abs(nextAmount - output.amountPerDay) < 0.01) {
+    if (
+      nextFromCampaign === output.fromCampaign &&
+      nextToCampaign === output.toCampaign &&
+      Math.abs(nextAmount - output.amountPerDay) < 0.01
+    ) {
       setSimulatedOutput(null);
       setSimUpdating(false);
       setSimError(null);
@@ -229,8 +342,8 @@ export function ReallocationCard({
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-          fromCampaign: output.fromCampaign,
-          toCampaign: output.toCampaign,
+          fromCampaign: nextFromCampaign,
+          toCampaign: nextToCampaign,
           amountPerDay: nextAmount,
           proposalId: output.proposalId,
           mutations: currentMutations,
@@ -268,21 +381,89 @@ export function ReallocationCard({
         : Math.max(minShiftBudget, Math.round(rawAmount / 25) * 25);
     setSliderAmount(snapped);
     setActionError(null);
-    triggerLiveSimulation(snapped);
+    triggerLiveSimulation(
+      snapped,
+      effectiveOutput.fromCampaign,
+      effectiveOutput.toCampaign,
+    );
   };
 
   const handlePresetPercent = (pct: number) => {
     const target =
       pct >= 1
-        ? output.before.fromDailyBudget
-        : Math.max(minShiftBudget, Math.round((output.before.fromDailyBudget * pct) / 25) * 25);
-    const clamped = Math.min(output.before.fromDailyBudget, target);
+        ? activeSourceBudget
+        : Math.max(
+            minShiftBudget,
+            Math.round((activeSourceBudget * pct) / 25) * 25,
+          );
+    const clamped = Math.min(activeSourceBudget, target);
     setSliderAmount(clamped);
     setActionError(null);
-    triggerLiveSimulation(clamped);
+    triggerLiveSimulation(
+      clamped,
+      effectiveOutput.fromCampaign,
+      effectiveOutput.toCampaign,
+    );
+  };
+
+  const handleSelectFromCampaign = (nextFromId: string) => {
+    if (!campaigns || nextFromId === activeToId) {
+      return;
+    }
+    const nextFromObj = campaigns.find((c) => c.campaignId === nextFromId);
+    if (!nextFromObj || nextFromObj.dailyBudget <= 0) {
+      return;
+    }
+    const nextCap = Math.max(1, Math.floor(nextFromObj.dailyBudget));
+    const nextMin = Math.min(25, nextCap);
+    const currentAmt = sliderAmount ?? effectiveOutput.amountPerDay;
+    const clampedAmt = Math.min(nextCap, Math.max(nextMin, Math.round(currentAmt)));
+    setSelectedFromId(nextFromId);
+    setSliderAmount(clampedAmt);
+    setActionError(null);
+    triggerLiveSimulation(clampedAmt, nextFromId, activeToId);
+  };
+
+  const handleSelectToCampaign = (nextToId: string) => {
+    if (!campaigns || nextToId === activeFromId) {
+      return;
+    }
+    const nextToObj = campaigns.find((c) => c.campaignId === nextToId);
+    if (!nextToObj) {
+      return;
+    }
+    const amt = effectiveOutput.amountPerDay;
+    setSelectedToId(nextToId);
+    setActionError(null);
+    triggerLiveSimulation(amt, activeFromId, nextToId);
+  };
+
+  const handleSwapCampaigns = () => {
+    if (!campaigns) {
+      return;
+    }
+    const currentToObj = campaigns.find((c) => c.campaignId === activeToId);
+    if (!currentToObj || currentToObj.dailyBudget < 25) {
+      return;
+    }
+    const nextFromId = activeToId;
+    const nextToId = activeFromId;
+    const nextCap = Math.max(1, Math.floor(currentToObj.dailyBudget));
+    const nextMin = Math.min(25, nextCap);
+    const clampedAmt = Math.min(
+      nextCap,
+      Math.max(nextMin, Math.round(effectiveOutput.amountPerDay)),
+    );
+    setSelectedFromId(nextFromId);
+    setSelectedToId(nextToId);
+    setSliderAmount(clampedAmt);
+    setActionError(null);
+    triggerLiveSimulation(clampedAmt, nextFromId, nextToId);
   };
 
   const handleResetSuggested = () => {
+    setSelectedFromId(output.fromCampaign);
+    setSelectedToId(output.toCampaign);
     setSliderAmount(null);
     setSimulatedOutput(null);
     setSimUpdating(false);
@@ -350,6 +531,94 @@ export function ReallocationCard({
           className="reallocation-slider-panel tabular-nums"
           data-testid="reallocation-whatif-slider"
         >
+          {canPickCampaigns ? (
+            <div
+              className="reallocation-pair-row"
+              data-testid="reallocation-campaign-picker"
+            >
+              <div className="reallocation-pair-field">
+                <label
+                  htmlFor={`from-camp-${output.proposalId}`}
+                  className="reallocation-pair-label"
+                >
+                  From campaign
+                </label>
+                <select
+                  id={`from-camp-${output.proposalId}`}
+                  className="field-select reallocation-campaign-select"
+                  disabled={disabled || submitting}
+                  value={activeFromId}
+                  onChange={(e) => handleSelectFromCampaign(e.target.value)}
+                  data-testid="reallocation-from-select"
+                >
+                  {groupedCampaigns.map(([chName, list]) => (
+                    <optgroup key={`from-${chName}`} label={chName}>
+                      {list.map((c) => (
+                        <option
+                          key={c.campaignId}
+                          value={c.campaignId}
+                          disabled={
+                            c.campaignId === activeToId || c.dailyBudget < 1
+                          }
+                        >
+                          {`${c.name} ($${formatBudget(c.dailyBudget)}/d · ${c.roas.toFixed(2)}x)`}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-secondary reallocation-swap-btn"
+                disabled={
+                  disabled ||
+                  submitting ||
+                  (campaigns?.find((c) => c.campaignId === activeToId)
+                    ?.dailyBudget ?? 0) < 25
+                }
+                onClick={handleSwapCampaigns}
+                aria-label="Swap source and target campaigns"
+                title="Swap source and target campaigns"
+                data-testid="reallocation-swap-campaigns"
+              >
+                ⇄
+              </button>
+
+              <div className="reallocation-pair-field">
+                <label
+                  htmlFor={`to-camp-${output.proposalId}`}
+                  className="reallocation-pair-label"
+                >
+                  To campaign
+                </label>
+                <select
+                  id={`to-camp-${output.proposalId}`}
+                  className="field-select reallocation-campaign-select"
+                  disabled={disabled || submitting}
+                  value={activeToId}
+                  onChange={(e) => handleSelectToCampaign(e.target.value)}
+                  data-testid="reallocation-to-select"
+                >
+                  {groupedCampaigns.map(([chName, list]) => (
+                    <optgroup key={`to-${chName}`} label={chName}>
+                      {list.map((c) => (
+                        <option
+                          key={c.campaignId}
+                          value={c.campaignId}
+                          disabled={c.campaignId === activeFromId}
+                        >
+                          {`${c.name} ($${formatBudget(c.dailyBudget)}/d · ${c.roas.toFixed(2)}x)`}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
+
           <div className="reallocation-slider-header">
             <label
               htmlFor={`shift-slider-${output.proposalId}`}
@@ -389,18 +658,18 @@ export function ReallocationCard({
 
           <div className="reallocation-preset-row">
             <span className="reallocation-preset-cap">
-              {`Max $${formatBudget(output.before.fromDailyBudget)}/day from ${fromLabel}`}
+              {`Max $${formatBudget(activeSourceBudget)}/day from ${fromLabel}`}
             </span>
             <div className="reallocation-preset-chips" role="group" aria-label="Quick shift percentages">
               {[0.25, 0.5, 0.75, 1].map((pct) => {
                 const targetVal =
                   pct >= 1
-                    ? output.before.fromDailyBudget
+                    ? activeSourceBudget
                     : Math.min(
-                        output.before.fromDailyBudget,
+                        activeSourceBudget,
                         Math.max(
                           minShiftBudget,
-                          Math.round((output.before.fromDailyBudget * pct) / 25) * 25,
+                          Math.round((activeSourceBudget * pct) / 25) * 25,
                         ),
                       );
                 const isSelected = Math.abs(effectiveOutput.amountPerDay - targetVal) < 0.5;

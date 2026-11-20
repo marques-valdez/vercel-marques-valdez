@@ -23,10 +23,12 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { AgentProgressCard, OPTIMISTIC_SUBMIT_STEPS } from './AgentProgressCard';
 import { BackendAlertBanner, buildHttpErrorAlert } from './BackendAlertBanner';
+import { ChangesPopover } from './ChangesPopover';
 import { ChannelHealthStrip } from './ChannelHealthStrip';
 import { Composer } from './Composer';
 import { HeaderBar } from './HeaderBar';
 import { HygieneCard } from './HygieneCard';
+import { ImpactToast } from './ImpactToast';
 import { InspectorDrawer } from './InspectorDrawer';
 import { PlaybookGrid } from './PlaybookGrid';
 import { ProtocolXRay } from './ProtocolXRay';
@@ -58,6 +60,8 @@ import {
   appendTwinMutations,
   fetchTwinState,
   readStoredMutations,
+  removeTwinMutationAt,
+  replaceTwinMutations,
   resetTwinMutations,
 } from '@/lib/twin-client';
 import {
@@ -83,9 +87,12 @@ import type {
   ChannelId,
   ChannelTrendSeries,
   ChannelTrendsResponse,
+  DemoStepId,
   DerivedTwinState,
   HealthStatus,
   HygieneToolOutput,
+  ImpactToastData,
+  Mutation,
   PlaybookDefinition,
   PlaybookId,
   ReallocationToolOutput,
@@ -95,6 +102,7 @@ import type {
   SandboxToolOutput,
   SavedWorkflowRecord,
   TelemetryData,
+  TwinTotals,
   WireFrameRecord,
   WorkflowToolOutput,
 } from '@/lib/types';
@@ -192,8 +200,20 @@ export function WorkspaceClient({
     () => initialRemix?.slug ?? 'creative-404-guard',
   );
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [hasOpenedShareStudio, setHasOpenedShareStudio] = useState(false);
+  const [baselineTotals, setBaselineTotals] = useState<TwinTotals | null>(null);
+  const [activeMutations, setActiveMutations] = useState<Mutation[]>([]);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [impactToast, setImpactToast] = useState<ImpactToastData | null>(null);
   const [proposalDecisions, setProposalDecisions] = useState<
     Record<string, 'approved' | 'declined'>
+  >({});
+  const approvedByCallIdRef = useRef<
+    Record<
+      string,
+      { from_campaign: string; to_campaign: string; amount_per_day: number }
+    >
   >({});
 
   const twinStateRef = useRef<DerivedTwinState | null>(twinState);
@@ -219,8 +239,19 @@ export function WorkspaceClient({
     setTwinError(null);
     try {
       const stored = readStoredMutations();
-      const derived = await fetchTwinState(stored);
-      setTwinState(derived);
+      setActiveMutations(stored);
+      if (stored.length === 0) {
+        const derived = await fetchTwinState([]);
+        setBaselineTotals(derived.totals);
+        setTwinState(derived);
+      } else {
+        const [baseDerived, derived] = await Promise.all([
+          fetchTwinState([]),
+          fetchTwinState(stored),
+        ]);
+        setBaselineTotals(baseDerived.totals);
+        setTwinState(derived);
+      }
     } catch (err) {
       setTwinError(
         err instanceof Error
@@ -580,6 +611,7 @@ export function WorkspaceClient({
         if (Array.isArray(snapshot.mutations) && snapshot.mutations.length > 0) {
           try {
             const derived = await fetchTwinState(snapshot.mutations);
+            setActiveMutations(snapshot.mutations);
             setTwinState(derived);
           } catch {
             // Keep locally derived state if replay fails
@@ -754,16 +786,65 @@ export function WorkspaceClient({
     }
   }, [clearError, messages, regenerate, sendMessage]);
 
+  const syncUndoneDecisions = useCallback((nextMutations: Mutation[]) => {
+    setProposalDecisions((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [callId, dec] of Object.entries(prev)) {
+        if (dec !== 'approved') {
+          continue;
+        }
+        const spec = approvedByCallIdRef.current[callId];
+        if (!spec) {
+          continue;
+        }
+        const stillPresent = nextMutations.some(
+          (m) =>
+            m.type === 'reallocate_budget' &&
+            m.from_campaign === spec.from_campaign &&
+            m.to_campaign === spec.to_campaign &&
+            Math.abs(m.amount_per_day - spec.amount_per_day) < 0.01,
+        );
+        if (!stillPresent) {
+          delete next[callId];
+          delete approvedByCallIdRef.current[callId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
   const handleApplyHygieneFix = useCallback(async () => {
     try {
+      const prevSnapshot = readStoredMutations();
+      const prevRisk = twinStateRef.current?.totals.spendAtRiskPerDay ?? 0;
       const { mutations, state } = await appendTwinMutations([
         { type: 'fix_utm_taxonomy' },
         { type: 'pause_broken_creatives' },
       ]);
       setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
       setTwinState(state);
+      setActiveMutations(mutations);
       setTwinError(null);
       setBackendAlert(null);
+      const protectedUsd = Math.max(
+        0,
+        Number((prevRisk - state.totals.spendAtRiskPerDay).toFixed(2)),
+      );
+      setImpactToast({
+        id: `hyg-toast-${Date.now()}`,
+        title: '✓ Ad & UTM fixes applied',
+        detail:
+          protectedUsd > 0
+            ? `$${protectedUsd.toLocaleString('en-US', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}/day protected · 0 open issues`
+            : 'All active links & UTM tags healthy',
+        tone: 'green',
+        undoSnapshot: prevSnapshot,
+      });
       if (dbConnectedRef.current && workspaceIdRef.current) {
         void syncWorkspaceMutations(workspaceIdRef.current, mutations).then(
           (res) => {
@@ -797,6 +878,9 @@ export function WorkspaceClient({
   const handleApproveReallocation = useCallback(
     async (proposal: ReallocationToolOutput, decisionKey: string) => {
       try {
+        const prevSnapshot = readStoredMutations();
+        const prevRoas =
+          twinStateRef.current?.totals.blendedRoas ?? proposal.blendedRoasBefore;
         const { mutations, state } = await appendTwinMutations([
           {
             type: 'reallocate_budget',
@@ -805,10 +889,26 @@ export function WorkspaceClient({
             amount_per_day: proposal.amountPerDay,
           },
         ]);
+        approvedByCallIdRef.current[decisionKey] = {
+          from_campaign: proposal.fromCampaign,
+          to_campaign: proposal.toCampaign,
+          amount_per_day: proposal.amountPerDay,
+        };
         setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
         setTwinState(state);
+        setActiveMutations(mutations);
         setTwinError(null);
         setBackendAlert(null);
+        const lift = state.totals.blendedRoas - prevRoas;
+        setImpactToast({
+          id: `realloc-toast-${Date.now()}`,
+          title: `✓ Shifted $${Math.round(proposal.amountPerDay).toLocaleString('en-US')}/day`,
+          detail: `Blended ROAS ${prevRoas.toFixed(2)}x → ${state.totals.blendedRoas.toFixed(2)}x (${
+            lift >= 0 ? '+' : ''
+          }${lift.toFixed(2)}x)`,
+          tone: 'green',
+          undoSnapshot: prevSnapshot,
+        });
         if (dbConnectedRef.current && workspaceIdRef.current) {
           void syncWorkspaceMutations(workspaceIdRef.current, mutations).then(
             (res) => {
@@ -884,6 +984,122 @@ export function WorkspaceClient({
     [clearError, sendMessage],
   );
 
+  const handleUndoSnapshot = useCallback(
+    async (snapshot: Mutation[]) => {
+      setMutationBusy(true);
+      try {
+        const { mutations, state } = await replaceTwinMutations(snapshot);
+        setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
+        setTwinState(state);
+        setActiveMutations(mutations);
+        syncUndoneDecisions(mutations);
+        if (mutations.length === 0) {
+          setChangesOpen(false);
+        }
+        setImpactToast({
+          id: `undo-snap-${Date.now()}`,
+          title: '↺ Change undone',
+          detail: `Blended ROAS ${state.totals.blendedRoas.toFixed(2)}x · $${Math.round(
+            state.totals.dailyBudget,
+          ).toLocaleString('en-US')}/day`,
+          tone: 'blue',
+        });
+        if (dbConnectedRef.current && workspaceIdRef.current) {
+          void syncWorkspaceMutations(workspaceIdRef.current, mutations);
+        }
+      } catch (err) {
+        setBackendAlert({
+          id: `undo-err-${Date.now()}`,
+          severity: 'error',
+          title: 'COULD NOT UNDO CHANGE',
+          message:
+            'The backend could not revert your previous campaign change. Please try again.',
+          technicalDetail: err instanceof Error ? err.message : String(err),
+          retryable: false,
+        });
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [syncUndoneDecisions],
+  );
+
+  const handleUndoMutationAt = useCallback(
+    async (index: number) => {
+      setMutationBusy(true);
+      try {
+        const { mutations, state } = await removeTwinMutationAt(index);
+        setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
+        setTwinState(state);
+        setActiveMutations(mutations);
+        syncUndoneDecisions(mutations);
+        if (mutations.length === 0) {
+          setChangesOpen(false);
+        }
+        setImpactToast({
+          id: `undo-idx-${Date.now()}`,
+          title: '↺ Change undone',
+          detail: `Blended ROAS ${state.totals.blendedRoas.toFixed(2)}x · ${mutations.length} active ${
+            mutations.length === 1 ? 'change' : 'changes'
+          }`,
+          tone: 'blue',
+        });
+        if (dbConnectedRef.current && workspaceIdRef.current) {
+          void syncWorkspaceMutations(workspaceIdRef.current, mutations);
+        }
+      } catch (err) {
+        setBackendAlert({
+          id: `undo-item-err-${Date.now()}`,
+          severity: 'error',
+          title: 'COULD NOT UNDO CHANGE',
+          message:
+            'The backend could not remove that campaign change. Please try again.',
+          technicalDetail: err instanceof Error ? err.message : String(err),
+          retryable: false,
+        });
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [syncUndoneDecisions],
+  );
+
+  const handleRevertAllMutations = useCallback(async () => {
+    setMutationBusy(true);
+    try {
+      const prevSnapshot = readStoredMutations();
+      const { mutations, state } = await replaceTwinMutations([]);
+      approvedByCallIdRef.current = {};
+      setProposalDecisions({});
+      setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
+      setTwinState(state);
+      setActiveMutations(mutations);
+      setChangesOpen(false);
+      setImpactToast({
+        id: `revert-all-${Date.now()}`,
+        title: '↺ Reverted campaign changes',
+        detail: `Restored baseline ${state.totals.blendedRoas.toFixed(2)}x blended ROAS while keeping chat history`,
+        tone: 'blue',
+        undoSnapshot: prevSnapshot.length > 0 ? prevSnapshot : undefined,
+      });
+      if (dbConnectedRef.current && workspaceIdRef.current) {
+        void syncWorkspaceMutations(workspaceIdRef.current, mutations);
+      }
+    } catch (err) {
+      setBackendAlert({
+        id: `revert-all-err-${Date.now()}`,
+        severity: 'error',
+        title: 'COULD NOT REVERT CAMPAIGNS',
+        message:
+          'Unable to restore baseline campaign budgets and tracking state.',
+        technicalDetail: err instanceof Error ? err.message : String(err),
+        retryable: false,
+      });
+    } finally {
+      setMutationBusy(false);
+    }
+  }, []);
+
   const handleResetDemo = useCallback(async () => {
     userStoppedRef.current = true;
     void stop();
@@ -894,7 +1110,12 @@ export function WorkspaceClient({
     setSyncWarning(null);
     setMessages([]);
     clearStoredChatMessages();
+    approvedByCallIdRef.current = {};
     setProposalDecisions({});
+    setActiveMutations([]);
+    setChangesOpen(false);
+    setImpactToast(null);
+    setHasOpenedShareStudio(false);
     setChannelDeltas({});
     setWireFramesByTurn({});
     setWireFramesByOrder([]);
@@ -913,6 +1134,7 @@ export function WorkspaceClient({
     setInput('');
     try {
       const freshState = await resetTwinMutations();
+      setBaselineTotals(freshState.totals);
       setTwinState(freshState);
       if (workspaceIdRef.current) {
         void resetRemoteWorkspace(workspaceIdRef.current);
@@ -926,6 +1148,7 @@ export function WorkspaceClient({
 
   const handleOpenWorkflowShare = useCallback((slug: string) => {
     setShareSlug(slug);
+    setHasOpenedShareStudio(true);
     setShareModalOpen(true);
   }, []);
 
@@ -1025,8 +1248,9 @@ export function WorkspaceClient({
   );
 
   const handleRunDemoStep = useCallback(
-    (step: 'sandbox' | 'xray' | 'failover' | 'og') => {
+    (step: DemoStepId) => {
       if (step === 'og') {
+        setHasOpenedShareStudio(true);
         setShareModalOpen(true);
         return;
       }
@@ -1097,6 +1321,44 @@ export function WorkspaceClient({
     return total;
   }, [messages]);
 
+  const completedDemoSteps = useMemo<Partial<Record<DemoStepId, boolean>>>(() => {
+    let sandboxDone = false;
+    for (const msg of messages) {
+      if (msg.role !== 'assistant') {
+        continue;
+      }
+      for (const part of msg.parts) {
+        if (
+          (part.type === 'tool-analyze_in_sandbox' &&
+            part.state === 'output-available') ||
+          (part.type === 'tool-propose_budget_reallocation' &&
+            part.state === 'output-available') ||
+          (part.type === 'dynamic-tool' &&
+            (part.toolName === 'analyze_in_sandbox' ||
+              part.toolName === 'propose_budget_reallocation') &&
+            part.state === 'output-available')
+        ) {
+          sandboxDone = true;
+        }
+      }
+    }
+    const xrayDone =
+      Object.keys(wireFramesByTurn).length > 0 || wireFramesByOrder.length > 0;
+    const failoverDone = telemetryEntries.some((e) => e.failover !== 'none');
+    return {
+      sandbox: sandboxDone,
+      xray: xrayDone,
+      failover: failoverDone,
+      og: hasOpenedShareStudio,
+    };
+  }, [
+    messages,
+    wireFramesByTurn,
+    wireFramesByOrder,
+    telemetryEntries,
+    hasOpenedShareStudio,
+  ]);
+
   const renderMessagePart = (
     part: RelayUIMessage['parts'][number],
     index: number,
@@ -1158,6 +1420,7 @@ export function WorkspaceClient({
             decision={decision}
             disabled={isStreaming}
             architectMode={architectMode}
+            campaigns={twinState?.campaigns}
             getMutations={readStoredMutations}
             onApprove={(proposal) =>
               handleApproveReallocation(proposal, part.toolCallId)
@@ -1239,6 +1502,7 @@ export function WorkspaceClient({
               decision={decision}
               disabled={isStreaming}
               architectMode={architectMode}
+              campaigns={twinState?.campaigns}
               getMutations={readStoredMutations}
               onApprove={(proposal) =>
                 handleApproveReallocation(proposal, part.toolCallId)
@@ -1314,9 +1578,17 @@ export function WorkspaceClient({
         inspectorOpen={inspectorOpen}
         architectMode={architectMode}
         hasConversation={messages.length > 0}
+        appliedMutationsCount={
+          twinState?.totals.appliedMutations ?? activeMutations.length
+        }
+        changesOpen={changesOpen}
         workflowCount={savedWorkflows.length}
         workflowsOpen={workflowsOpen}
-        onOpenShare={() => setShareModalOpen(true)}
+        onOpenShare={() => {
+          setHasOpenedShareStudio(true);
+          setShareModalOpen(true);
+        }}
+        onToggleChanges={() => setChangesOpen((prev) => !prev)}
         onToggleWorkflows={() => setWorkflowsOpen((prev) => !prev)}
         onToggleInspector={() => setInspectorOpen((prev) => !prev)}
         onToggleArchitectMode={handleToggleArchitectMode}
@@ -1330,6 +1602,7 @@ export function WorkspaceClient({
             healthPingMs={healthPingMs}
             injectFailure={injectFailure}
             isStreaming={isStreaming}
+            completedSteps={completedDemoSteps}
             onToggleInjectFailure={setInjectFailure}
             onRunDemoStep={handleRunDemoStep}
             onOpenInspector={handleOpenInspectorFromStrip}
@@ -1352,6 +1625,8 @@ export function WorkspaceClient({
           <PlaybookGrid
             highlightedPlaybookId={highlightedPlaybookId}
             disabled={isStreaming}
+            twinState={twinState}
+            workflowCount={savedWorkflows.length}
             onSelectPlaybook={handleSelectPlaybook}
           />
         ) : (
@@ -1381,6 +1656,8 @@ export function WorkspaceClient({
                 <PlaybookGrid
                   highlightedPlaybookId={highlightedPlaybookId}
                   disabled={isStreaming}
+                  twinState={twinState}
+                  workflowCount={savedWorkflows.length}
                   onSelectPlaybook={handleSelectPlaybook}
                 />
               ) : null}
@@ -1732,6 +2009,18 @@ export function WorkspaceClient({
       </main>
 
       <div className="composer-dock">
+        <ImpactToast
+          toast={impactToast}
+          busy={mutationBusy}
+          onUndo={(snapshot) => void handleUndoSnapshot(snapshot)}
+          onJumpTop={() => {
+            if (typeof window !== 'undefined') {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          }}
+          onDismiss={() => setImpactToast(null)}
+        />
+
         {jumpPill.visible ? (
           <div className="jump-to-latest-wrap">
             <button
@@ -1773,6 +2062,19 @@ export function WorkspaceClient({
         isOpen={shareModalOpen}
         initialSlug={shareSlug}
         onClose={() => setShareModalOpen(false)}
+      />
+
+      <ChangesPopover
+        isOpen={changesOpen}
+        mutations={activeMutations}
+        baselineTotals={baselineTotals}
+        currentTotals={twinState?.totals ?? null}
+        campaigns={twinState?.campaigns}
+        busy={mutationBusy}
+        onUndoAt={(idx) => void handleUndoMutationAt(idx)}
+        onRevertAllMutations={() => void handleRevertAllMutations()}
+        onResetFullWorkspace={() => void handleResetDemo()}
+        onClose={() => setChangesOpen(false)}
       />
 
       <WorkflowsDrawer

@@ -2316,3 +2316,177 @@ test('V6 concise cards: HygieneCard Top-5 & filter pills, SandboxCard Top-6, and
   assert.equal(followUpsHtml.includes('turn-followup-primary'), true);
   assert.equal(followUpsHtml.includes('Default next step:'), true);
 });
+
+
+test('V7 demo polish: PlaybookGrid live badges, HygieneCard resolved state, ReallocationCard pair override, ImpactToast, ChangesPopover, and X-Ray tour progress', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const React = (await import('react')).default;
+  const ReactDOMServer = (await import('react-dom/server')).default;
+  const { PlaybookGrid, computePlaybookLiveBadge } = loadTsModule('components/PlaybookGrid.tsx');
+  const { HygieneCard } = loadTsModule('components/HygieneCard.tsx');
+  const { ReallocationCard, computeClientReallocationPreview } = loadTsModule('components/ReallocationCard.tsx');
+  const { ImpactToast } = loadTsModule('components/ImpactToast.tsx');
+  const { ChangesPopover, describeMutation } = loadTsModule('components/ChangesPopover.tsx');
+  const { VercelArchitectureStrip } = loadTsModule('components/VercelArchitectureStrip.tsx');
+
+  // Verify app/icon.svg exists and renders valid SVG
+  const iconSvgPath = path.join(process.cwd(), 'app', 'icon.svg');
+  assert.equal(fs.existsSync(iconSvgPath), true);
+  assert.equal(fs.readFileSync(iconSvgPath, 'utf-8').includes('<svg'), true);
+
+  const syntheticTwin = {
+    totals: {
+      campaignCount: 4,
+      adGroupCount: 16,
+      rowCount: 400,
+      dailyBudget: 2500,
+      monthlyBudget: 75000,
+      brokenCreatives: 3,
+      utmViolations: 2,
+      spendAtRiskPerDay: 450,
+      blendedRoas: 3.1,
+      appliedMutations: 1,
+    },
+    channels: [
+      { channel: 'Google Ads', channelId: 'google_ads', campaignCount: 2, adGroupCount: 8, dailyBudget: 1500, brokenCreatives: 1, utmViolations: 0, spendAtRiskPerDay: 150, totalSpend: 15000, totalPipelineValue: 63000, roas: 4.2 },
+      { channel: 'LinkedIn Ads', channelId: 'linkedin_ads', campaignCount: 2, adGroupCount: 8, dailyBudget: 1000, brokenCreatives: 2, utmViolations: 2, spendAtRiskPerDay: 300, totalSpend: 10000, totalPipelineValue: 18000, roas: 1.8 },
+    ],
+    campaigns: [
+      { campaignId: 'syn_c1', name: 'Alpha Search', channel: 'Google Ads', channelId: 'google_ads', matchType: 'exact', adGroupCount: 4, dailyBudget: 900, totalSpend: 9000, totalClicks: 1000, totalConversions: 50, totalPipelineValue: 40500, roas: 4.5, brokenCreatives: 0, utmViolations: 0 },
+      { campaignId: 'syn_c2', name: 'Beta Social', channel: 'LinkedIn Ads', channelId: 'linkedin_ads', matchType: 'audience', adGroupCount: 4, dailyBudget: 600, totalSpend: 6000, totalClicks: 400, totalConversions: 8, totalPipelineValue: 9000, roas: 1.5, brokenCreatives: 2, utmViolations: 1 },
+      { campaignId: 'syn_c3', name: 'Gamma Retarget', channel: 'Google Ads', channelId: 'google_ads', matchType: 'phrase', adGroupCount: 4, dailyBudget: 1000, totalSpend: 10000, totalClicks: 900, totalConversions: 60, totalPipelineValue: 50000, roas: 5.0, brokenCreatives: 0, utmViolations: 0 },
+    ],
+    hygieneIssues: [],
+  };
+
+  const guardActive = computePlaybookLiveBadge('creative-404-guard', syntheticTwin, 0);
+  assert.equal(guardActive.label, '5 open issues · $450/day at risk');
+  const guardHealthy = computePlaybookLiveBadge(
+    'creative-404-guard',
+    { ...syntheticTwin, totals: { ...syntheticTwin.totals, brokenCreatives: 0, utmViolations: 0, spendAtRiskPerDay: 0 } },
+    0,
+  );
+  assert.equal(guardHealthy.label, '✓ All links & UTMs healthy');
+  assert.equal(computePlaybookLiveBadge('daily-pacing-guardrail', syntheticTwin, 2).label, '2 scheduled checks saved');
+
+  const gridHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(PlaybookGrid, {
+      highlightedPlaybookId: null,
+      disabled: false,
+      twinState: syntheticTwin,
+      workflowCount: 1,
+      onSelectPlaybook: () => {},
+    }),
+  );
+  assert.equal(gridHtml.includes('data-testid="playbook-live-badge-creative-404-guard"'), true);
+  assert.equal(gridHtml.includes('2.40x ROAS gap · LinkedIn → Google'), true);
+
+  // HygieneCard resolved row badges when twin reports 0 open issues
+  const resolvedHygieneHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(HygieneCard, {
+      state: 'completed',
+      output: {
+        brokenCount: 1,
+        utmCount: 1,
+        totalSpendAtRiskPerDay: 220,
+        flaggedItems: [
+          { issueId: 'i1', issueType: 'broken_404', status: 'active', channel: 'Google Ads', channelId: 'google_ads', campaignId: 'syn_c1', campaignName: 'Alpha Search', adGroupId: 'ag1', value: 'https://example.invalid/404', recommendedFix: 'Pause', dailySpendAtRisk: 120 },
+          { issueId: 'i2', issueType: 'utm_violation', status: 'active', channel: 'LinkedIn Ads', channelId: 'linkedin_ads', campaignId: 'syn_c2', campaignName: 'Beta Social', adGroupId: 'ag2', value: 'utm_missing', recommendedFix: 'Fix', dailySpendAtRisk: 100 },
+        ],
+      },
+      twinState: { ...syntheticTwin, totals: { ...syntheticTwin.totals, brokenCreatives: 0, utmViolations: 0, spendAtRiskPerDay: 0 } },
+      onApplyFix: async () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(resolvedHygieneHtml.includes('protected · 0 open issues'), true);
+  assert.equal(resolvedHygieneHtml.includes('✓ Ad paused'), true);
+  assert.equal(resolvedHygieneHtml.includes('✓ UTM repaired'), true);
+
+  // ReallocationCard campaign pair override math & picker markup
+  const baseProp = {
+    proposalId: 'p_syn',
+    fromCampaign: 'syn_c2',
+    fromCampaignName: 'Beta Social',
+    fromChannel: 'LinkedIn Ads',
+    toCampaign: 'syn_c1',
+    toCampaignName: 'Alpha Search',
+    toChannel: 'Google Ads',
+    amountPerDay: 200,
+    before: { fromDailyBudget: 600, toDailyBudget: 900, fromRoas: 1.5, toRoas: 4.5, totalDailyBudget: 2500 },
+    after: { fromDailyBudget: 400, toDailyBudget: 1100, fromRoas: 1.5, toRoas: 4.5, totalDailyBudget: 2500 },
+    blendedRoasBefore: 3.1,
+    blendedRoasAfter: 3.34,
+  };
+  const pairOverridden = computeClientReallocationPreview(baseProp, 300, {
+    fromCampaign: syntheticTwin.campaigns[1],
+    toCampaign: syntheticTwin.campaigns[2],
+  });
+  assert.equal(pairOverridden.toCampaign, 'syn_c3');
+  assert.equal(pairOverridden.toCampaignName, 'Gamma Retarget');
+  assert.equal(pairOverridden.after.fromDailyBudget + pairOverridden.after.toDailyBudget, 1600);
+  assert.ok(pairOverridden.blendedRoasAfter > baseProp.blendedRoasBefore);
+
+  const reallocPickerHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, {
+      state: 'completed',
+      output: baseProp,
+      decision: null,
+      disabled: false,
+      campaigns: syntheticTwin.campaigns,
+      onApprove: async () => {},
+      onDecline: () => {},
+      onRetry: () => {},
+    }),
+  );
+  assert.equal(reallocPickerHtml.includes('data-testid="reallocation-campaign-picker"'), true);
+  assert.equal(reallocPickerHtml.includes('data-testid="reallocation-swap-campaigns"'), true);
+
+  // ImpactToast, ChangesPopover, and VercelArchitectureStrip tour progress
+  const toastHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ImpactToast, {
+      toast: { id: 't1', title: 'Fixes saved', detail: '$450/day protected', tone: 'green', undoSnapshot: [] },
+      onUndo: () => {},
+      onJumpTop: () => {},
+      onDismiss: () => {},
+    }),
+  );
+  assert.equal(toastHtml.includes('data-testid="impact-toast-undo"'), true);
+
+  const mutDesc = describeMutation(
+    { type: 'reallocate_budget', from_campaign: 'syn_c2', to_campaign: 'syn_c3', amount_per_day: 250 },
+    syntheticTwin.campaigns,
+  );
+  assert.equal(mutDesc.subtitle, 'Beta Social → Gamma Retarget');
+
+  const popoverHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ChangesPopover, {
+      isOpen: true,
+      mutations: [{ type: 'pause_broken_creatives' }],
+      baselineTotals: { ...syntheticTwin.totals, blendedRoas: 2.9, spendAtRiskPerDay: 450 },
+      currentTotals: { ...syntheticTwin.totals, blendedRoas: 3.25, spendAtRiskPerDay: 0 },
+      campaigns: syntheticTwin.campaigns,
+      onUndoAt: () => {},
+      onRevertAllMutations: () => {},
+      onResetFullWorkspace: () => {},
+      onClose: () => {},
+    }),
+  );
+  assert.equal(popoverHtml.includes('data-testid="changes-popover"'), true);
+  assert.equal(popoverHtml.includes('+0.35x net'), true);
+
+  const archDoneHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(VercelArchitectureStrip, {
+      health: null,
+      healthPingMs: 12,
+      injectFailure: false,
+      isStreaming: false,
+      completedSteps: { sandbox: true, xray: true },
+      onToggleInjectFailure: () => {},
+      onRunDemoStep: () => {},
+      onOpenInspector: () => {},
+    }),
+  );
+  assert.equal(archDoneHtml.includes('(2/4 ✓)'), true);
+});
