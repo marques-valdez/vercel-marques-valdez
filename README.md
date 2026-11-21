@@ -3,7 +3,7 @@
 **Live Public Demo:** https://vercel-marques-valdez.vercel.app *(Opt-In Architect X-Ray: https://vercel-marques-valdez.vercel.app/?xray=1 · Health Probe: https://vercel-marques-valdez.vercel.app/api/agent/health)*  
 **Public GitHub Repository:** https://github.com/marques-valdez/vercel-marques-valdez
 
-Relay Studio is an interactive reference application for **Fieldstone's** campaign operations assistant (**Relay**). It demonstrates **Option A (augment the existing Python stack)**: keeping a Python 3.12 `FastAPI` + `LangGraph` agent intact while pairing it with a Next.js 15 App Router workspace (`ai@7`, `@ai-sdk/react`) on **Fluid Compute**, hybrid two-tier model routing through **Vercel AI Gateway**, isolated Python & SQL compute inside **Vercel Sandbox** microVMs, and single-domain multi-service routing via **Vercel Services**—running out of the box with zero required datastore (and optional Neon Serverless Postgres attachment).
+Relay Studio is an interactive reference application for **Fieldstone's** campaign operations assistant (**Relay**). It demonstrates **Option A (augment the existing Python stack)**: keeping a Python 3.12 `FastAPI` + `LangGraph` agent intact while pairing it with a Next.js 15 App Router workspace (`ai@7`, `@ai-sdk/react`) on **Fluid Compute**, hybrid two-tier model routing through **Vercel AI Gateway**, indexed `10,400`-row SQL analytics & workspace persistence on **Neon Serverless Postgres** (with `$0` local fallback), isolated `2,000`-trial Monte Carlo Python compute inside **Vercel Sandbox** microVMs, and single-domain multi-service routing via **Vercel Services**.
 
 ## Customer-Ready Submission Package & Architecture Specs
 
@@ -36,8 +36,8 @@ Vercel Services Project (vercel.json — single domain, zero required datastore)
    ├── frontend/  (Next.js App Router: /, /p/[slug], /api/og, /icon.svg)
    └── backend/   (Python 3.12 FastAPI + LangGraph, entrypoint app.main:app)
           ├──▶ Vercel AI Gateway (card + /v1/decisions router, ordered fallbacks, auto caching)
-          ├──▶ Vercel Sandbox    (deny-all microVM SQLite + 2,000-trial Monte Carlo Python)
-          └──▶ Neon Postgres     (optional DATABASE_URL workspace & SQL analytics layer)
+          ├──▶ Neon Postgres     (primary 10,400-row SQL analytics & workspace persistence)
+          └──▶ Vercel Sandbox    (deny-all 2,000-trial Monte Carlo Python; SQLite fallback)
 ```
 
 - **Python owns agent orchestration and state derivation**: There is no TypeScript agent, no Next.js `/api/chat` route, no Edge runtime export, and no simulated model mode.
