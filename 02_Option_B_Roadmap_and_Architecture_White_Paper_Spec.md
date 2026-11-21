@@ -1,8 +1,9 @@
 # Where Vercel Fits in an Agentic Marketing Platform — Architecture White Paper & Phase 2 (`Option B`) Roadmap
 
 > **Purpose of This File:**
-> 1. **Standalone Shareable White Paper (`.md`):** Answers the two-step architecture brief end-to-end for **Fieldstone's** campaign operations assistant (**Relay**), comparing **Option A (Augment Now — Keep Python Intact)** against **Option B (Replace Backend Runtime Later — Phase 2)**, including a sourced **Temporal vs. Vercel Workflows** evaluation and the **Python-to-TypeScript** timing justification.
-> 2. **Vercel Interactive Executive Report Spec (Section 8):** Drop this `.md` file into Vercel (`v0.app` or a coding agent following `https://vercel.com/design.md`) to generate an interactive, Geist-styled executive briefing and presentation website.
+> 1. **Standalone Shareable White Paper (`.md`):** Answers the architecture brief end-to-end for **Fieldstone's** campaign operations assistant (**Relay**), comparing **Option A (Augment Now — Keep Python Intact)** against **Option B (Replace Backend Runtime Later — Phase 2)**, including a sourced **Temporal vs. Vercel Workflows** evaluation, the **Python-to-TypeScript** timing justification, a 5-stage production rollout plan, pre-kickoff customer limitations, and AI validation methodology.
+> 2. **Working Reference App:** **Live Public Demo:** https://vercel-marques-valdez.vercel.app *(Architect X-Ray: https://vercel-marques-valdez.vercel.app/?xray=1)* · **Public GitHub Repo:** https://github.com/marques-valdez/vercel-marques-valdez
+> 3. **Vercel Interactive Executive Report Spec (Section 8):** Drop this `.md` file into Vercel (`v0.app` or a coding agent following `https://vercel.com/design.md`) to generate an interactive, Geist-styled executive briefing and presentation website.
 
 ---
 
@@ -196,13 +197,22 @@ flowchart TB
 
 ---
 
-## 6. Trade-Offs, Limits & Security Invariants
+## 6. Production Rollout Plan, Known Limitations & Security Invariants
 
-1. **AI Gateway Budgets Do Not Cap BYOK Spend:** Vercel's documentation specifies that AI Gateway budgets meter Vercel-billed credits and exclude BYOK provider spend (`vercel.com/docs/ai-gateway/observability-and-spend/budgets`). Per-tenant daily caps stay enforced in Relay's application credit ledger, fed by AI Gateway Custom Reporting (`$0.075` per 1,000 tag/user writes).
-2. **BYOK Fallback to Vercel Keys (`$0.20 / 1K` Toggle):** By default, failed BYOK calls retry using Vercel's provider keys (shifting that fallback call off the GCP commit). Turning *Fallback to Vercel Keys* off keeps 100% of calls on Vertex AI at `$0.20` per 1,000 BYOK requests (`vercel.com/docs/ai-gateway/authentication-and-byok/byok`).
-3. **Never Run Model-Generated DAGs as `experimental_dynamic` Workflows:** Workflow SDK docs explicitly warn that `experimental_dynamic` JavaScript runs with full deployment privileges and environment variables (`workflow-sdk.dev/v5/docs/advanced/dynamic-workflows`). Customer DAGs must execute via a **fixed, deployed interpreter workflow** passing generated Python strictly into **Vercel Sandbox** (`networkPolicy: 'deny-all'`, `persistent: false`).
-4. **Vertex BYOK Credentials:** Vertex BYOK uses service-account credentials (`project`, `location`, `googleCredentials`). Organizations blocking GCP service-account key creation require a scoped org-policy exception.
-5. **Unverified Item Flagged for PoC:** Confirm during Week 1 testing whether pre-purchased cloud Provisioned Throughput units apply identically when invoked through AI Gateway BYOK regional endpoints (`inferenceRegion`).
+### 6.1 Five-Stage Option A Rollout (`Preview → Validation → Canary → Cutover → Rollback`)
+1. **Preview (`Week 1`):** Link the repository in `iad1` (`~2–5 ms` from GCP `us-east4`); configure **OIDC Workload Identity Federation** (`vercel.com/docs/oidc/gcp`) to staging `FastAPI` on `GKE` and define Vertex AI BYOK Virtual Models (`vmc/relay-fast`, `vmc/relay-reasoning`). Every PR generates an immutable Preview URL in `<3 min`.
+2. **Validation (`Weeks 1–2`):** Gate promotion on CI + shadow-traffic checks: `156` Python `pytest` + `DeepEval` Digital Twin write-accuracy checks, `36` frontend contract/whitebox tests, Playwright E2E suites, `70/30` fast-to-reasoning routing accuracy on replayed transcripts, and Week 1 verification of Vertex AI Provisioned Throughput over BYOK.
+3. **Canary (`Week 3`):** Enable Pro/Enterprise **Rolling Releases** (`5% → 25% → 50%` of self-serve PLG cohorts over 48 hours), gating promotion on `<0.5%` AI Gateway 5xx, `>99%` SSE stream completion, `p95` TTFT, and flat `GKE` pod RSS during `10,400`-row Sandbox SQL queries.
+4. **Cutover (`Week 4`):** Promote Rolling Release to `100%` of production UI traffic on Fluid Compute (charging Active CPU rather than idle SSE wait time) while keeping `100%` of Python `LangGraph`, `Temporal` cron DAGs, and `AlloyDB` intact on `GCP us-east4`. *(Phase 2 later migrates durable runs via a 4-wave Strangler-Fig cutover behind feature flags.)*
+5. **Rollback (`< 5 Seconds`):** Two independent escape hatches: (a) **Vercel Instant Rollback** reverts the frontend/Services alias to the prior immutable build in `<5s` with zero rebuild, and (b) Python `OPENAI_BASE_URL` / `SANDBOX_DISABLED=1` toggles on `GKE` fall back immediately to direct Vertex AI calls and in-process execution.
+
+### 6.2 Known Limitations & Pre-Kickoff Customer Readout
+1. **Option A Defers Multi-Day Tab-Close Durability to Phase 2:** Streams remain bound to synchronous HTTP SSE in Phase 1 by design so Fieldstone avoids rewriting Python `LangGraph` mid-launch (`vercel-workflow` Python SDK is in Beta). `72h` autonomous A/B runs unlock in Phase 2 (`WorkflowAgent` + `Workflows`).
+2. **AI Gateway Budgets Do Not Cap BYOK Spend:** Vercel's documentation specifies that AI Gateway budgets meter Vercel-billed credits and exclude BYOK provider spend (`vercel.com/docs/ai-gateway/observability-and-spend/budgets`). Per-tenant daily caps stay enforced in Relay's application credit ledger, fed by SSE usage or AI Gateway Custom Reporting (`$0.075` per 1,000 tag/user writes).
+3. **BYOK Fallback to Vercel Keys (`$0.20 / 1K` Toggle):** By default, failed BYOK calls retry using Vercel's provider keys (shifting that fallback call off the GCP commit). Turning *Fallback to Vercel Keys* off keeps 100% of calls on Vertex AI at `$0.20` per 1,000 BYOK requests (`vercel.com/docs/ai-gateway/authentication-and-byok/byok`).
+4. **Sandbox `deny-all` & Cold-Boot Nuances:** `NetworkPolicy.deny_all()` blocks runtime `pip install` and outbound ad-API fetches inside Sandboxes (`~300–900 ms` boot; pass pre-fetched session rows in and run stdlib `sqlite3`/Python or pre-built snapshots); Vercel Services is in Beta and Rolling Releases require Pro/Enterprise.
+5. **Never Run Model-Generated DAGs as `experimental_dynamic` Workflows:** Workflow SDK docs explicitly warn that `experimental_dynamic` JavaScript runs with full deployment privileges and environment variables (`workflow-sdk.dev/v5/docs/advanced/dynamic-workflows`). Customer DAGs must execute via a **fixed, deployed interpreter workflow** passing generated Python strictly into **Vercel Sandbox** (`networkPolicy: 'deny-all'`, `persistent: false`).
+6. **Vertex BYOK Credentials & Week 1 PoC Check:** Vertex BYOK uses service-account credentials (`project`, `location`, `googleCredentials`, requiring a scoped GCP org-policy exception where key creation is restricted); confirm during Week 1 testing whether pre-purchased cloud Provisioned Throughput units apply identically when invoked through AI Gateway BYOK regional endpoints (`inferenceRegion`).
 
 ---
 
@@ -220,6 +230,10 @@ flowchart TB
 | **PR to isolated reviewable preview URL** | Shared branch contention | **< 3 minutes**; < 5s Instant Rollback | **< 3 minutes** full-stack | Vercel Deployments log |
 | **Runs surviving closed browser tabs / deploys** | `0%` (request-scoped) | `0%` *(deferred by design)* | **`100%`** (`WorkflowChatTransport` + Skew Protection) | Disconnect & mid-run deploy test |
 | **Worker fleets to autoscale & drain** | `GKE` agent pods + `Temporal` workers | Unchanged *(0 Python rewrite)* | **`0` worker fleets** | Infrastructure inventory |
+
+### 7.1 Development Tooling & How We Validated AI Behavior
+- **IDE & Agentic Build Workflow:** Built in a Linux cloud workstation via **agentic CLI/IDE orchestration** (architecture planner, parallel Python `uv`/`FastAPI`/`LangGraph` + TypeScript/Next.js 15 builders, and Playwright headless Chromium UX verifiers) anchored to locked Option A/B specifications.
+- **5-Layer AI Validation Process:** (1) **Deterministic Digital Twin ground truth** (`scripts/generate_twin.py`, `seed = 20261117`, fixed-point Python `Decimal` state replay checking every tool's ROAS/budget output to the cent); (2) **`156` Python `pytest` checks** covering `POST /v1/decisions` confidence fallbacks, malformed/double-quoted LLM tool-argument recovery (`unwrap_llm_str` caught on live free-tier models), golden SSE v1 ordering, and 2,000-trial Monte Carlo invariants; (3) **`36` frontend contract/whitebox tests** (`node --test`) verifying per-`toolCallId` human approval gates and `zod`-strict `/p/[slug]` slugs; (4) **live Playwright Chromium & `Primary 503 drill` failover runs** (`229` baseline + V5–V7 multi-turn suites, `0` HTTP `>=400`); and (5) **manual transcript review** enforcing concise `2–4` bullet post-tool summaries + sequential `Next table` follow-up chips.
 
 ---
 
