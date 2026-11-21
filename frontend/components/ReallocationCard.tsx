@@ -1,12 +1,12 @@
 'use client';
 
 /**
- * Human-in-the-loop approval card for `propose_budget_reallocation`.
+ * Human-in-the-loop budget simulator & approval card (`propose_budget_reallocation`).
  *
- * Enforces the read-only proposal invariant: renders server-computed before
- * and after daily budgets and blended ROAS deltas, and mutates Digital Twin
- * state only when the operator explicitly clicks Approve (decision state is
- * isolated per `toolCallId` in `WorkspaceClient`).
+ * Combines channel-grouped `From` / `To` campaign selectors, `⇄` swap, and a
+ * What-If daily shift slider with instant 60fps local budget/ROAS previews and
+ * debounced `POST /api/agent/reallocation/simulate` (`@vercel/sandbox` 2,000-trial
+ * Monte Carlo) refreshes. Mutates state only on explicit Approve (`toolCallId`-scoped).
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';

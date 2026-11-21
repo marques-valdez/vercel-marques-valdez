@@ -4,9 +4,9 @@
  * Sticky 56px workspace header bar.
  *
  * Keeps the default Marketing Manager chrome minimal (portfolio summary pill,
- * conditional `Reset changes`, `Workflows` flyout counter, `Share playbook`,
- * and the compact `X-Ray` toggle). The `Inspector` button only appears when
- * `architectMode` is explicitly turned on.
+ * conditional `Changes (N)` session audit trigger, `Reset changes`, `Workflows`
+ * flyout counter, `Share playbook`, and the compact `X-Ray` toggle). The
+ * `Inspector` button only appears when `architectMode` is explicitly turned on.
  */
 
 import React from 'react';

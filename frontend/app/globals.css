@@ -1,3 +1,14 @@
+/**
+ * Relay Studio Design System & Component Stylesheet (Geist Light-First).
+ *
+ * Architecture & accessibility invariants:
+ * - Zero external CSS frameworks: custom properties define surface, border,
+ *   WCAG AA semantic tints (>=4.5:1 ink contrast), and fixed channel colors
+ *   (Google Ads `#0070F3`, LinkedIn Ads `#7C3AED`, Meta Ads `#0E9F9A`).
+ * - Responsive down to 375px mobile with zero horizontal overflow and full
+ *   `@media (prefers-reduced-motion: reduce)` animation opt-out.
+ */
+
 :root {
   --bg-surface: #FFFFFF;
   --bg-subtle: #FAFAFA;

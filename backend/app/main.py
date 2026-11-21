@@ -9,8 +9,12 @@ Architecture role:
 Key invariants enforced at the HTTP boundary:
     - Stateless per-request execution: the browser sends its `localStorage`
       mutation log on every request; Python validates and replays it cleanly.
-    - Bounded per-IP sliding-window rate limiting (`20 req / 60s / IP`) with
-      LRU eviction (`4096` IPs) to prevent unbounded memory growth.
+    - Bounded per-IP sliding-window rate limiting (`20 req / 60s / IP` on chat,
+      `60 req / 60s / IP` on interactive `POST /api/agent/reallocation/simulate`)
+      with LRU eviction (`4096` IPs) to prevent unbounded memory growth.
+    - Exposes read-only helper routes (`GET /api/agent/trends`, `POST /api/agent/sandbox/query`,
+      `POST /api/agent/reallocation/simulate`, and optional `/api/agent/workspace*`
+      Neon sync) so UI sliders, sparklines, and SQL tabs run with zero LLM tokens.
     - Strict input sanitization: rejects NaN/Inf floats and lone UTF-16
       surrogates before they can break JSON serialization or downstream LLMs.
 """

@@ -3,10 +3,10 @@
 /**
  * Live Digital Twin KPI strip across paid channels.
  *
- * Renders server-recomputed budgets, broken landing page counts, and UTM
- * tracking gaps from `POST /api/agent/twin/state`. Highlights live session
- * deltas (budget shifts and remediated issues) immediately after the user
- * approves a reallocation or applies a 1-click hygiene fix.
+ * Renders server-recomputed budgets, 30-day interactive `TrendSparkline` ROAS
+ * curves (`GET /api/agent/trends`), clickable channel/issue drill-downs,
+ * `Optimize mix →`, and 380ms cubic ease-out `useAnimatedNumber` KPI roll-ups
+ * with session delta badges after reallocations or 1-click hygiene fixes.
  */
 
 import React from 'react';

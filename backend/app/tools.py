@@ -8,10 +8,12 @@ Why tools are built per request instead of at module import:
 
 Safety boundary:
     - `propose_budget_reallocation` is strictly read-only: it computes exact
-      before/after diffs and returns a proposal card; budgets change only after
-      the user explicitly clicks Approve in the UI.
-    - All numeric inputs reject Python `bool` (`isinstance(True, int)`) so
-      malformed LLM tool arguments fail validation cleanly.
+      `Decimal` before/after diffs plus a 2,000-trial `@vercel/sandbox` Monte
+      Carlo P10/P50/P90 30-day pipeline forecast; budgets change only after the
+      user explicitly clicks Approve in the UI.
+    - Pydantic `before` validators (`unwrap_llm_str`) normalize double-quoted
+      string arguments from free-tier models, and numeric inputs reject Python
+      `bool` (`isinstance(True, int)`) so malformed tool calls fail cleanly.
 """
 
 from __future__ import annotations

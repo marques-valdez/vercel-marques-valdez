@@ -1,10 +1,10 @@
 /**
  * Deterministic Marketing Manager follow-up generator and channel drill-down prompts.
  *
- * Keeps post-turn momentum effortless without extra LLM calls or hardcoded
- * dataset literals: every label, dollar figure, and ROAS comparison derives
- * strictly from completed tool outputs in the active turn and live Digital
- * Twin state.
+ * Orders index `0` as the sequential "Next table" slice (`channel_roas_summary`
+ * -> `campaign_roas_ranking` -> `ad_group_efficiency` -> `daily_pacing_anomalies`)
+ * and derives every label, dollar figure, and ROAS spread strictly from live
+ * tool outputs and Digital Twin state (zero hardcoded dataset literals).
  */
 
 import type {

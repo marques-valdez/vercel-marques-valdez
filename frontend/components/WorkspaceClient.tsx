@@ -11,11 +11,12 @@
  * and the FinOps Inspector drawer.
  *
  * State invariants:
- * - Zero database: chat history (`chat-store.ts`), Twin mutations
+ * - Dual-mode persistence: chat history (`chat-store.ts`), Twin mutations
  *   (`twin-client.ts`), and saved workflows (`workflow-store.ts`) persist in
- *   `localStorage` and clear atomically on `Reset changes`.
- * - Approval isolation: reallocation approval decisions key off `part.toolCallId`
- *   so repeated proposals in the same session never collide.
+ *   `localStorage` (and sync to Neon Postgres when `DATABASE_URL` is active).
+ * - Closed-loop Undo & approval isolation: `proposalDecisions` keys off
+ *   `part.toolCallId`, and `approvedByCallIdRef` re-arms cards automatically
+ *   whenever a mutation is undone from `ImpactToast` or `ChangesPopover`.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';

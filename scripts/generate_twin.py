@@ -1,4 +1,10 @@
-"""Deterministic Digital Twin dataset generator for Fieldstone Relay Studio."""
+"""Deterministic Digital Twin dataset generator for Fieldstone Relay Studio.
+
+Generates byte-for-byte reproducible `backend/data/twin.json` and `backend/data/rows.csv`
+(`DEFAULT_SEED = 20261117`: 3 paid channels, 12 campaigns, 104 ad groups, 10,400 daily
+performance rows, $6,167/day budget, 14 broken 404 landing pages, and 9 UTM tracking
+violations) using 100% synthetic, zero-PII Fieldstone data.
+"""
 
 from __future__ import annotations
 

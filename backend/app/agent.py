@@ -18,6 +18,11 @@ Key design choices:
       hardcoding vendor SDKs or restricting provider eligibility (`order`/`only`).
     - `temperature` is intentionally omitted because newer Claude 5.5 models
       reject explicit temperature parameters.
+    - Streams reconciled AI SDK 7 `data-agent-status` frames (`id: "turn-progress"`)
+      with structured `steps[]` (`pending`/`in_progress`/`done`/`failed`), reuses
+      failed checklist slots on model self-retry, detects output length caps
+      (`MAX_OUTPUT_TOKENS = 2048`, `phase="truncated"`), and grounds concise,
+      non-duplicative replies above interactive UI cards.
 """
 
 from __future__ import annotations

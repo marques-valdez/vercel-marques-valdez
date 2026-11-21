@@ -3,8 +3,9 @@
 /**
  * 2x2 starter playbook grid solving cold-start blank-screen drop-off.
  *
- * Highlights the active card when arriving from a shared `/?remix=<slug>` link
- * and collapses into a 1-line switcher once the conversation begins.
+ * Derives live urgency and ROAS spread badges (`computePlaybookLiveBadge`)
+ * directly from `twinState` and `workflowCount`, highlights `/?remix=<slug>`
+ * entries, and collapses into a 1-line switcher once chatting begins.
  */
 
 import React from 'react';

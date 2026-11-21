@@ -10,8 +10,11 @@ Serverless & Neon invariants:
     - Uses short-lived `psycopg` v3 connections with `autocommit=True` and
       `prepare_threshold=None` so Neon's PgBouncer transaction pooler never
       hits prepared-statement collisions across pooled backends.
-    - Auto-initializes the 5 normalized tables once per process via idempotent
-      `CREATE TABLE IF NOT EXISTS` DDL (zero manual migration step on deploy).
+    - Auto-initializes the 6 normalized tables once per process via idempotent
+      `CREATE TABLE IF NOT EXISTS` DDL (`relay_workspaces`, `relay_twin_mutations`,
+      `relay_workflows`, `relay_chat_sessions`, `relay_telemetry_events`, plus
+      indexed `relay_daily_performance` seeded once via `COPY FROM STDIN` for
+      Neon SQL analytics and 30-day channel trend sparklines).
     - Degrades cleanly when `DATABASE_URL` / `POSTGRES_URL` is unset (local dev
       and unit tests continue working in stateless browser-local mode).
 """

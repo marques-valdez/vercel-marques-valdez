@@ -3,9 +3,9 @@
 /**
  * Contextual follow-up action chips rendered below completed assistant turns.
  *
- * Surfaces 2-3 one-click next actions grounded in the turn's tool outputs
- * (e.g. hygiene -> budget shift -> recurring check) so marketers can keep
- * moving without typing from scratch.
+ * Highlights index `0` (`.turn-followup-primary`) as the sequential default
+ * "Next table" slice alongside secondary optimization and guardrail actions so
+ * marketers explore data progressively without cognitive overload.
  */
 
 import React from 'react';

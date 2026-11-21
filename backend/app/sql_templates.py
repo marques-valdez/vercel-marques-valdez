@@ -1,11 +1,13 @@
-"""Parameterized SQLite analytics templates over Digital Twin daily performance rows.
+"""Parameterized SQL analytics templates (SQLite & PostgreSQL dialects) and LLM arg sanitizers.
 
 Security invariant:
     Relay Studio never lets the LLM generate arbitrary raw SQL strings. Instead,
     the model (and the interactive Sandbox SQL workbench) selects one of four
     allowlisted `TemplateId` values and passes strictly validated parameters
     (channel, day window, sort order, limit). Every user/model value binds via
-    SQLite `?` placeholders so SQL injection is structurally impossible.
+    parameterized placeholders (`?` for SQLite, `%s` for Neon PostgreSQL) so SQL
+    injection is structurally impossible. `unwrap_llm_str()` also strips stray
+    nested quotes (`'"all"'` -> `'all'`) emitted by small tool-calling models.
 """
 
 from __future__ import annotations

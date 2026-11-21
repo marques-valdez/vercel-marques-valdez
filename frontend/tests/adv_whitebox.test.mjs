@@ -1,3 +1,11 @@
+/**
+ * Adversarial white-box frontend test suite (`node --test`).
+ *
+ * Exercises UTF-16 surrogate boundaries at `MAX_INPUT_CHARS`, NaN/Inf table
+ * formatting, prototype-pollution slug rejection, `localStorage` quota/SSR
+ * fallbacks, split SSE chunk framing, `AbortController` unmount cleanup, and
+ * FinOps token ledger arithmetic.
+ */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';

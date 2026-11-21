@@ -1,11 +1,16 @@
-"""Vercel Sandbox SQLite runner with deterministic in-process stdlib fallback.
+"""Vercel Sandbox compute runner (SQL analytics + 2,000-trial Monte Carlo simulator).
 
 Architecture role:
-    Offloads heavy row-level aggregations (10,400 daily performance rows) out of
-    application pod RAM and out of the LLM context window by running a small
-    stdlib Python + SQLite script inside an isolated Firecracker microVM. Only
-    the compact aggregated JSON table (3-20 rows) returns to the model, avoiding
-    ~140K+ prompt tokens per turn.
+    1. Row-level analytics (`run_sandbox_query` & `compute_channel_daily_trends`):
+       Queries indexed `relay_daily_performance` in Neon Serverless Postgres when
+       `DATABASE_URL` is configured (`mode="neon-postgres"`), or offloads 10,400
+       CSV rows into an isolated Firecracker microVM (`@vercel/sandbox`) / stdlib
+       SQLite fallback—returning compact 3-20 row JSON summaries (~140K+ prompt
+       tokens avoided per turn).
+    2. Statistical simulation (`run_monte_carlo_reallocation_in_sandbox`):
+       Executes CPU-bound 2,000-trial bootstrap Monte Carlo + Hill diminishing-
+       returns budget simulations inside `@vercel/sandbox` microVMs outside
+       FastAPI worker RAM, returning P10/P50/P90 30-day pipeline lift intervals.
 
 Security & cost invariants:
     - `network_policy=NetworkPolicy.deny_all()`: blocks all outbound network

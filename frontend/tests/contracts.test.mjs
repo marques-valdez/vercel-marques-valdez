@@ -1,3 +1,11 @@
+/**
+ * Frontend contract & SSR component verification suite (`node --test`).
+ *
+ * Validates zero-DB share slug codecs, Digital Twin client rollback on 422,
+ * local `/api/agent/*` SSE proxy behavior, approval `toolCallId` isolation,
+ * chart geometry, progressive card disclosure, What-If simulator math,
+ * closed-loop Undo popovers, and zero hardcoded dataset literals.
+ */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';

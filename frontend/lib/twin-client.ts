@@ -196,6 +196,11 @@ export async function appendTwinMutations(
   }
 }
 
+/**
+ * Atomically replaces the stored mutation log after replaying `nextMutations`
+ * against Python (`POST /api/agent/twin/state`), rolling back `localStorage` if
+ * validation fails. Powers 1-click Undo snapshots and campaign-only resets.
+ */
 export async function replaceTwinMutations(
   nextMutations: Mutation[],
 ): Promise<{ mutations: Mutation[]; state: DerivedTwinState }> {

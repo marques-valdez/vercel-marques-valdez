@@ -3,11 +3,10 @@
 /**
  * Typed tool card for `analyze_in_sandbox` + interactive SQL workbench.
  *
- * Displays the aggregated performance table returned from Vercel Sandbox (or
- * in-process SQLite fallback) and lets operators re-slice across all four
- * allowlisted SQL templates (`POST /api/agent/sandbox/query`) without making
- * another LLM call. Formats percentage columns before spend columns so mixed
- * keys like `spend_delta_pct` render as `%` instead of `$`.
+ * Syncs progressive Top-6 comparison bars and table rows (or renders the signed
+ * chronological `DailyAnomalyChart` on `daily_pacing_anomalies`) and lets
+ * operators re-slice across all four allowlisted SQL templates via
+ * `POST /api/agent/sandbox/query` with zero extra LLM calls.
  */
 
 import React, { useState } from 'react';

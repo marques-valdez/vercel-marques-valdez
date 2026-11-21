@@ -3,9 +3,10 @@
 /**
  * Typed tool card for `audit_campaign_hygiene`.
  *
- * Displays flagged 404 landing pages and UTM tracking gaps grouped by channel
- * and offers a 1-click remediation action that appends deterministic fixes to
- * the visitor's Digital Twin mutation log without requiring an extra LLM turn.
+ * Displays channel spend-at-risk bars, progressive Top-5 disclosure with inline
+ * `All` / `Broken 404` / `UTM tags` filter pills, and a 1-click remediation
+ * button that appends deterministic fixes to the Digital Twin mutation log,
+ * flips rows to resolved green pills, and re-arms automatically on Undo.
  */
 
 import React, { useEffect, useState } from 'react';
