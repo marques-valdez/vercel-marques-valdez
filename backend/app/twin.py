@@ -248,6 +248,7 @@ class BaseHygieneIssueRecord(BaseModel):
     canonicalValue: str | None = None
     recommendedFix: str = Field(min_length=1)
     dailySpendAtRisk: float = Field(ge=0.0, allow_inf_nan=False)
+    brokenSince: str | None = None
 
 
 class _RawBaseTwinFile(BaseModel):
@@ -626,6 +627,7 @@ class HygieneIssue(BaseModel):
     value: str
     recommendedFix: str
     dailySpendAtRisk: float
+    brokenSince: str | None = None
 
 
 class DerivedTwinState(BaseModel):
@@ -753,6 +755,7 @@ def _build_derived_state(
                 value=value,
                 recommendedFix=base_issue.recommendedFix,
                 dailySpendAtRisk=risk,
+                brokenSince=base_issue.brokenSince,
             )
         )
 

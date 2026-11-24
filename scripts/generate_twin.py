@@ -4,6 +4,12 @@ Generates byte-for-byte reproducible `backend/data/twin.json` and `backend/data/
 (`DEFAULT_SEED = 20261117`: 3 paid channels, 12 campaigns, 104 ad groups, 10,400 daily
 performance rows, $6,167/day budget, 14 broken 404 landing pages, and 9 UTM tracking
 violations) using 100% synthetic, zero-PII Fieldstone data.
+
+The daily rows follow the scripted events in `SCENARIOS` below (when each landing
+page broke, one resolved tracking outage, and two gradual conversion-rate trends) so
+time-based views such as the guardrail backtest have dated history to show. Campaign
+totals are rescaled to each campaign's `targetRoas`, so the scenarios move results
+between days and ad groups without changing any campaign or portfolio total.
 """
 
 from __future__ import annotations
@@ -240,6 +246,58 @@ CAMPAIGN_SPECS: list[dict[str, Any]] = [
 ]
 
 
+# Scripted, fully synthetic events applied to the daily rows. Day offsets count from
+# START_DATE (offset 0) to GENERATED_FOR_DATE (offset NUM_DAYS - 1).
+SCENARIOS: dict[str, Any] = {
+    # (campaignId, ad group index) -> first day offset on which the landing page
+    # returns 404. Before that day the ad group converts normally.
+    "brokenSinceOffset": {
+        # Long-standing: broken for the whole window.
+        ("cmp_linkedin_01", 1): 0,
+        ("cmp_linkedin_03", 3): 0,
+        ("cmp_meta_03", 1): 0,
+        # Site migration three weeks before the end date retired eight pages.
+        ("cmp_google_02", 3): 78,
+        ("cmp_google_03", 2): 78,
+        ("cmp_google_04", 4): 78,
+        ("cmp_google_05", 5): 78,
+        ("cmp_linkedin_01", 4): 78,
+        ("cmp_linkedin_01", 7): 78,
+        ("cmp_meta_01", 2): 78,
+        ("cmp_meta_02", 3): 78,
+        # Final week: three more pages expired.
+        ("cmp_linkedin_02", 2): 94,
+        ("cmp_linkedin_04", 2): 94,
+        ("cmp_meta_03", 4): 94,
+    },
+    # A conversion-tracking outage that was fixed: zero recorded conversions on these
+    # ad groups for the inclusive offset range. Not part of today's open issues.
+    "resolvedOutage": {
+        "campaignId": "cmp_google_01",
+        "adGroupIndices": (2, 5, 8),
+        "startOffset": 33,
+        "endOffset": 53,
+    },
+    # Linear conversion-rate ramps over the final `days` days, ending at `endMultiplier`.
+    "conversionRateTrends": {
+        "cmp_linkedin_03": {"days": 30, "endMultiplier": 0.5},
+        "cmp_google_04": {"days": 30, "endMultiplier": 1.5},
+    },
+}
+
+
+def _trend_multiplier(campaign_id: str, day_offset: int) -> float:
+    """Return the scripted conversion-rate multiplier for a campaign on a given day."""
+    trend = SCENARIOS["conversionRateTrends"].get(campaign_id)
+    if trend is None:
+        return 1.0
+    ramp_start = NUM_DAYS - int(trend["days"])
+    if day_offset < ramp_start:
+        return 1.0
+    progress = (day_offset - ramp_start + 1) / float(trend["days"])
+    return 1.0 + (float(trend["endMultiplier"]) - 1.0) * progress
+
+
 def _largest_remainder_cents(
     total_cents: int,
     weights: list[float],
@@ -305,6 +363,11 @@ def build_twin_artifacts(seed: int = DEFAULT_SEED) -> tuple[str, str]:
             )
             is_404 = ag_i in spec["broken404"]
             is_bad_utm = ag_i in spec["utmViolations"]
+            if is_404 and (cid, ag_i) not in SCENARIOS["brokenSinceOffset"]:
+                raise ValueError(f"Missing brokenSinceOffset scenario for {cid} group {ag_i}.")
+            broken_since_offset = SCENARIOS["brokenSinceOffset"].get((cid, ag_i), NUM_DAYS)
+            outage = SCENARIOS["resolvedOutage"]
+            in_outage_group = cid == outage["campaignId"] and ag_i in outage["adGroupIndices"]
 
             dest_url = (
                 spec["broken404"][ag_i]
@@ -344,6 +407,7 @@ def build_twin_artifacts(seed: int = DEFAULT_SEED) -> tuple[str, str]:
                         "sortPriority": 0 if cid == "cmp_linkedin_01" else 1,
                         "issueType": "broken_404",
                         **common_issue,
+                        "brokenSince": dates[broken_since_offset].isoformat(),
                         "value": dest_url,
                         "recommendedFix": "Pause creative until destination returns 200",
                     }
@@ -367,15 +431,24 @@ def build_twin_artifacts(seed: int = DEFAULT_SEED) -> tuple[str, str]:
                 day_weights.append(season * rng.uniform(0.88, 1.12))
             day_spend_cents = _largest_remainder_cents(ag_spend_cents, day_weights, min_cents=100)
 
-            for day_val, spend_cents in zip(dates, day_spend_cents):
+            for day_offset, (day_val, spend_cents) in enumerate(zip(dates, day_spend_cents)):
                 spend_dollars = spend_cents / 100.0
                 cpc = rng.uniform(*spec["cpcRange"])
                 clicks = max(1, int(round(spend_dollars / cpc)))
-                if is_404:
+                page_is_down = is_404 and day_offset >= broken_since_offset
+                tracking_is_down = (
+                    in_outage_group
+                    and outage["startOffset"] <= day_offset <= outage["endOffset"]
+                )
+                if page_is_down or tracking_is_down:
                     convs = 0
                     pipe_weight = 0.0
                 else:
-                    conv_prob = spec["cvr"] * rng.uniform(0.85, 1.15)
+                    conv_prob = (
+                        spec["cvr"]
+                        * _trend_multiplier(cid, day_offset)
+                        * rng.uniform(0.85, 1.15)
+                    )
                     convs = sum(1 for _ in range(clicks) if rng.random() < conv_prob)
                     pipe_weight = convs * rng.uniform(0.82, 1.18) if convs > 0 else 0.0
                 cmp_row_records.append(
@@ -456,6 +529,7 @@ def build_twin_artifacts(seed: int = DEFAULT_SEED) -> tuple[str, str]:
                 "value": raw["value"],
                 "recommendedFix": raw["recommendedFix"],
                 "dailySpendAtRisk": raw["dailySpendAtRisk"],
+                **({"brokenSince": raw["brokenSince"]} if "brokenSince" in raw else {}),
             }
         )
 

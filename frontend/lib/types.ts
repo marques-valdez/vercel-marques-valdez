@@ -88,6 +88,7 @@ export interface HygieneIssue {
   value: string;
   recommendedFix: string;
   dailySpendAtRisk: number;
+  brokenSince?: string | null;
 }
 
 export interface DerivedTwinState {
@@ -396,3 +397,78 @@ export interface ImpactToastData {
 }
 
 export type DemoStepId = 'sandbox' | 'xray' | 'failover' | 'og';
+
+export interface BacktestPoint {
+  date: string;
+  spend: number;
+  atRiskSpend: number;
+  atRiskPct: number;
+}
+
+export interface BacktestEvent {
+  date: string;
+  brokenLinks: number;
+}
+
+export interface BacktestSummary {
+  alertDays: number;
+  alertRatePct: number;
+  longestStreakDays: number;
+  firstAlertDate: string | null;
+  flaggedSpend: number;
+  minPct: number;
+  medianPct: number;
+  maxPct: number;
+}
+
+export interface BacktestResponse {
+  metric: string;
+  windowDays: number;
+  days: number;
+  mode: 'neon-postgres' | 'in-process';
+  ms: number;
+  thresholdPct: number;
+  channels: ChannelId[];
+  points: BacktestPoint[];
+  events: BacktestEvent[];
+  summary: BacktestSummary;
+}
+
+export interface PortfolioShift {
+  fromCampaign: string;
+  fromCampaignName: string;
+  fromChannel: string;
+  toCampaign: string;
+  toCampaignName: string;
+  toChannel: string;
+  amountPerDay: number;
+}
+
+export interface PortfolioPlan {
+  planId: string;
+  label: string;
+  sharePct: number;
+  movedPerDay: number;
+  movedSharePct: number;
+  shifts: PortfolioShift[];
+  mutations: ReallocateBudgetMutation[];
+  fitsMutationCap: boolean;
+  incrementalPipelineP10: number;
+  incrementalPipelineP50: number;
+  incrementalPipelineP90: number;
+  blendedRoasP10: number;
+  blendedRoasP50: number;
+  blendedRoasP90: number;
+  probabilityOfPositiveLiftPct: number;
+  liftPerDollarMoved: number;
+}
+
+export interface PortfolioOptimizeResponse {
+  mode: 'sandbox' | 'in-process';
+  trials: number;
+  horizonDays: number;
+  sandboxMs: number;
+  baseline: { dailyBudget: number; blendedRoas: number };
+  plans: PortfolioPlan[];
+  note?: string | null;
+}

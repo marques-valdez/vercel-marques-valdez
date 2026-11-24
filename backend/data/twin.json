@@ -52,8 +52,8 @@
       "adGroupCount": 10,
       "dailyBudget": 900.0,
       "totalSpend": 90000.0,
-      "totalClicks": 18819,
-      "totalConversions": 1080,
+      "totalClicks": 18788,
+      "totalConversions": 990,
       "totalPipelineValue": 549000.0,
       "roas": 6.1,
       "brokenCreatives": 0,
@@ -68,8 +68,8 @@
       "adGroupCount": 10,
       "dailyBudget": 650.0,
       "totalSpend": 65000.0,
-      "totalClicks": 12278,
-      "totalConversions": 474,
+      "totalClicks": 12263,
+      "totalConversions": 513,
       "totalPipelineValue": 282750.0,
       "roas": 4.35,
       "brokenCreatives": 1,
@@ -84,8 +84,8 @@
       "adGroupCount": 10,
       "dailyBudget": 550.0,
       "totalSpend": 55000.0,
-      "totalClicks": 12579,
-      "totalConversions": 388,
+      "totalClicks": 12527,
+      "totalConversions": 447,
       "totalPipelineValue": 189750.0,
       "roas": 3.45,
       "brokenCreatives": 1,
@@ -100,8 +100,8 @@
       "adGroupCount": 10,
       "dailyBudget": 450.0,
       "totalSpend": 45000.0,
-      "totalClicks": 7929,
-      "totalConversions": 264,
+      "totalClicks": 7922,
+      "totalConversions": 329,
       "totalPipelineValue": 177750.0,
       "roas": 3.95,
       "brokenCreatives": 1,
@@ -116,8 +116,8 @@
       "adGroupCount": 10,
       "dailyBudget": 350.0,
       "totalSpend": 35000.0,
-      "totalClicks": 11007,
-      "totalConversions": 284,
+      "totalClicks": 10962,
+      "totalConversions": 293,
       "totalPipelineValue": 103250.0,
       "roas": 2.95,
       "brokenCreatives": 1,
@@ -132,8 +132,8 @@
       "adGroupCount": 9,
       "dailyBudget": 1400.0,
       "totalSpend": 140000.0,
-      "totalClicks": 10827,
-      "totalConversions": 122,
+      "totalClicks": 10777,
+      "totalConversions": 156,
       "totalPipelineValue": 119000.0,
       "roas": 0.85,
       "brokenCreatives": 3,
@@ -148,8 +148,8 @@
       "adGroupCount": 9,
       "dailyBudget": 350.0,
       "totalSpend": 35000.0,
-      "totalClicks": 3441,
-      "totalConversions": 81,
+      "totalClicks": 3416,
+      "totalConversions": 94,
       "totalPipelineValue": 85750.0,
       "roas": 2.45,
       "brokenCreatives": 1,
@@ -164,8 +164,8 @@
       "adGroupCount": 9,
       "dailyBudget": 250.0,
       "totalSpend": 25000.0,
-      "totalClicks": 2649,
-      "totalConversions": 74,
+      "totalClicks": 2645,
+      "totalConversions": 52,
       "totalPipelineValue": 68750.0,
       "roas": 2.75,
       "brokenCreatives": 1,
@@ -180,8 +180,8 @@
       "adGroupCount": 9,
       "dailyBudget": 200.0,
       "totalSpend": 20000.0,
-      "totalClicks": 1788,
-      "totalConversions": 40,
+      "totalClicks": 1799,
+      "totalConversions": 48,
       "totalPipelineValue": 43000.0,
       "roas": 2.15,
       "brokenCreatives": 1,
@@ -196,8 +196,8 @@
       "adGroupCount": 6,
       "dailyBudget": 467.0,
       "totalSpend": 46700.0,
-      "totalClicks": 15621,
-      "totalConversions": 389,
+      "totalClicks": 15779,
+      "totalConversions": 441,
       "totalPipelineValue": 144770.0,
       "roas": 3.1,
       "brokenCreatives": 1,
@@ -212,8 +212,8 @@
       "adGroupCount": 6,
       "dailyBudget": 350.0,
       "totalSpend": 35000.0,
-      "totalClicks": 13523,
-      "totalConversions": 431,
+      "totalClicks": 13530,
+      "totalConversions": 508,
       "totalPipelineValue": 133000.0,
       "roas": 3.8,
       "brokenCreatives": 1,
@@ -228,8 +228,8 @@
       "adGroupCount": 6,
       "dailyBudget": 250.0,
       "totalSpend": 25000.0,
-      "totalClicks": 11060,
-      "totalConversions": 153,
+      "totalClicks": 11005,
+      "totalConversions": 194,
       "totalPipelineValue": 48750.0,
       "roas": 1.95,
       "brokenCreatives": 2,
@@ -1602,7 +1602,8 @@
       "adGroupId": "ag_linkedin_01_01",
       "value": "https://fieldstone.example/lp/enterprise-q2-playbook-old",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 155.56
+      "dailySpendAtRisk": 155.56,
+      "brokenSince": "2026-08-10"
     },
     {
       "issueId": "hyg_02",
@@ -1615,7 +1616,8 @@
       "adGroupId": "ag_linkedin_01_04",
       "value": "https://fieldstone.example/lp/abm-field-guide-2025",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 155.56
+      "dailySpendAtRisk": 155.56,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_03",
@@ -1628,7 +1630,8 @@
       "adGroupId": "ag_linkedin_01_07",
       "value": "https://fieldstone.example/webinars/global-ops-summit-archive",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 155.56
+      "dailySpendAtRisk": 155.56,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_04",
@@ -1641,7 +1644,8 @@
       "adGroupId": "ag_google_02_03",
       "value": "https://fieldstone.example/lp/mid-market-roi-calculator-v1",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 65.0
+      "dailySpendAtRisk": 65.0,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_05",
@@ -1654,7 +1658,8 @@
       "adGroupId": "ag_google_03_02",
       "value": "https://fieldstone.example/lp/campaign-audit-template-2025",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 55.0
+      "dailySpendAtRisk": 55.0,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_06",
@@ -1667,7 +1672,8 @@
       "adGroupId": "ag_google_04_04",
       "value": "https://fieldstone.example/compare/legacy-ad-tools-retired",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 45.0
+      "dailySpendAtRisk": 45.0,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_07",
@@ -1680,7 +1686,8 @@
       "adGroupId": "ag_google_05_05",
       "value": "https://fieldstone.example/tour/interactive-walkthrough-old",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 35.0
+      "dailySpendAtRisk": 35.0,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_08",
@@ -1693,7 +1700,8 @@
       "adGroupId": "ag_linkedin_02_02",
       "value": "https://fieldstone.example/resources/mops-checklist-v1",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 38.89
+      "dailySpendAtRisk": 38.89,
+      "brokenSince": "2026-11-12"
     },
     {
       "issueId": "hyg_09",
@@ -1706,7 +1714,8 @@
       "adGroupId": "ag_linkedin_03_03",
       "value": "https://fieldstone.example/reports/paid-media-benchmark-draft",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 27.78
+      "dailySpendAtRisk": 27.78,
+      "brokenSince": "2026-08-10"
     },
     {
       "issueId": "hyg_10",
@@ -1719,7 +1728,8 @@
       "adGroupId": "ag_linkedin_04_02",
       "value": "https://fieldstone.example/solutions/revops-workflow-beta",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 22.22
+      "dailySpendAtRisk": 22.22,
+      "brokenSince": "2026-11-12"
     },
     {
       "issueId": "hyg_11",
@@ -1732,7 +1742,8 @@
       "adGroupId": "ag_meta_01_02",
       "value": "https://fieldstone.example/lp/demand-capture-kit-q2",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 77.83
+      "dailySpendAtRisk": 77.83,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_12",
@@ -1745,7 +1756,8 @@
       "adGroupId": "ag_meta_02_03",
       "value": "https://fieldstone.example/pricing/team-tier-promo-expired",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 58.33
+      "dailySpendAtRisk": 58.33,
+      "brokenSince": "2026-10-27"
     },
     {
       "issueId": "hyg_13",
@@ -1758,7 +1770,8 @@
       "adGroupId": "ag_meta_03_01",
       "value": "https://fieldstone.example/stories/b2b-growth-reel-404",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 41.67
+      "dailySpendAtRisk": 41.67,
+      "brokenSince": "2026-08-10"
     },
     {
       "issueId": "hyg_14",
@@ -1771,7 +1784,8 @@
       "adGroupId": "ag_meta_03_04",
       "value": "https://fieldstone.example/events/autumn-roadshow-registration",
       "recommendedFix": "Pause creative until destination returns 200",
-      "dailySpendAtRisk": 41.67
+      "dailySpendAtRisk": 41.67,
+      "brokenSince": "2026-11-12"
     },
     {
       "issueId": "hyg_15",

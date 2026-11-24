@@ -17,12 +17,17 @@ Serverless & Neon invariants:
       Neon SQL analytics and 30-day channel trend sparklines).
     - Degrades cleanly when `DATABASE_URL` / `POSTGRES_URL` is unset (local dev
       and unit tests continue working in stateless browser-local mode).
+    - Records a SHA-256 of the seeded `rows.csv` in `relay_dataset_meta`. When the
+      bundled CSV differs from what the database holds, the table is replaced only
+      if `RELAY_RESEED_DATASET=1` is set. Preview and production deployments can
+      share one database, so a deployment must never rewrite shared rows unprompted.
 """
 
 from __future__ import annotations
 
 import csv
 from decimal import Decimal
+import hashlib
 import io
 import json
 import os
@@ -44,6 +49,9 @@ _schema_lock = threading.Lock()
 _schema_initialized_dsn: str | None = None
 _perf_seed_lock = threading.Lock()
 _perf_seeded_dsn: str | None = None
+_dataset_in_sync_by_dsn: dict[str, bool] = {}
+
+DATASET_RESEED_ENV: Final[str] = "RELAY_RESEED_DATASET"
 
 _SCHEMA_SQL: Final[tuple[str, ...]] = (
     """
@@ -119,6 +127,13 @@ _SCHEMA_SQL: Final[tuple[str, ...]] = (
     CREATE INDEX IF NOT EXISTS idx_relay_perf_campaign_date
         ON relay_daily_performance (campaign_id, date)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS relay_dataset_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        rows_sha256 TEXT NOT NULL,
+        seeded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
 )
 
 
@@ -134,6 +149,19 @@ def get_database_url() -> str | None:
 def is_database_configured() -> bool:
     """Return True when a Postgres connection string is configured in the environment."""
     return get_database_url() is not None
+
+
+def is_dataset_reseed_enabled() -> bool:
+    """Return True when the operator has allowed replacing relay_daily_performance."""
+    return os.getenv(DATASET_RESEED_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def is_dataset_in_sync() -> bool | None:
+    """Report whether Neon holds the bundled rows.csv (None until first checked)."""
+    dsn = get_database_url()
+    if dsn is None:
+        return None
+    return _dataset_in_sync_by_dsn.get(dsn)
 
 
 def normalize_workspace_id(raw: str | None) -> str | None:
@@ -457,15 +485,25 @@ def _ensure_performance_seeded(
             return int(row[0]) if row else 0
 
     with _perf_seed_lock:
+        csv_text = get_rows_csv_text(data_dir)
+        bundled_sha = hashlib.sha256(csv_text.encode("utf-8")).hexdigest()
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM relay_daily_performance")
             existing = cur.fetchone()
             existing_count = int(existing[0]) if existing else 0
-            if existing_count > 0:
-                _perf_seeded_dsn = dsn
-                return existing_count
+            cur.execute("SELECT rows_sha256 FROM relay_dataset_meta WHERE id = 1")
+            meta_row = cur.fetchone()
+            stored_sha = str(meta_row[0]) if meta_row else None
 
-            csv_text = get_rows_csv_text(data_dir)
+            if existing_count > 0:
+                in_sync = stored_sha == bundled_sha
+                if in_sync or not is_dataset_reseed_enabled():
+                    # Either nothing to do, or the rows differ and the operator has
+                    # not opted in to replacing them. Leave shared data untouched.
+                    _dataset_in_sync_by_dsn[dsn] = in_sync
+                    _perf_seeded_dsn = dsn
+                    return existing_count
+
             reader = csv.reader(io.StringIO(csv_text, newline=""))
             header = next(reader, None)
             if header is None or tuple(header) != EXPECTED_CSV_COLUMNS:
@@ -477,25 +515,68 @@ def _ensure_performance_seeded(
                 "FROM STDIN"
             )
             inserted = 0
-            with cur.copy(copy_sql) as copy:
-                for row in reader:
-                    if not row:
-                        continue
-                    copy.write_row(
-                        (
-                            row[0],
-                            row[1],
-                            row[2],
-                            row[3],
-                            float(row[4]),
-                            int(row[5]),
-                            int(row[6]),
-                            float(row[7]),
+            # One transaction: readers see either the old rows or the new rows.
+            with conn.transaction():
+                if existing_count > 0:
+                    cur.execute("TRUNCATE relay_daily_performance")
+                with cur.copy(copy_sql) as copy:
+                    for row in reader:
+                        if not row:
+                            continue
+                        copy.write_row(
+                            (
+                                row[0],
+                                row[1],
+                                row[2],
+                                row[3],
+                                float(row[4]),
+                                int(row[5]),
+                                int(row[6]),
+                                float(row[7]),
+                            )
                         )
-                    )
-                    inserted += 1
+                        inserted += 1
+                cur.execute(
+                    """
+                    INSERT INTO relay_dataset_meta (id, rows_sha256, seeded_at)
+                    VALUES (1, %s, NOW())
+                    ON CONFLICT (id)
+                    DO UPDATE SET rows_sha256 = EXCLUDED.rows_sha256, seeded_at = NOW()
+                    """,
+                    (bundled_sha,),
+                )
+            _dataset_in_sync_by_dsn[dsn] = True
             _perf_seeded_dsn = dsn
             return inserted
+
+
+def run_backtest_query(
+    pg_sql: str,
+    params: Sequence[Any] = (),
+    *,
+    data_dir: Path | None = None,
+) -> list[tuple[Any, ...]] | None:
+    """Run the guardrail backtest SQL on Neon.
+
+    Returns None when no database is configured or when Neon holds rows that differ
+    from the bundled rows.csv, so the caller can compute from the bundled file and
+    stay consistent with twin.json.
+    """
+    dsn = get_database_url()
+    if dsn is None:
+        return None
+
+    with _connect(dsn) as conn:
+        _ensure_schema(conn, dsn)
+        _ensure_performance_seeded(conn, dsn, data_dir=data_dir)
+        if not _dataset_in_sync_by_dsn.get(dsn, False):
+            return None
+        with conn.cursor() as cur:
+            cur.execute(pg_sql, tuple(params))
+            return [
+                tuple(_normalize_pg_scalar(value) for value in row)
+                for row in cur.fetchall()
+            ]
 
 
 def run_postgres_analytics_query(

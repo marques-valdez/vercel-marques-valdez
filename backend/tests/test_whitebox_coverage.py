@@ -2042,14 +2042,14 @@ async def test_adv_iter3_ad_group_efficiency_zero_conversions_only_uses_having_s
         for row in all_ags.table
         if row["total_conversions"] == 0
     ]
-    assert len(expected_zero_ids) == 14
+    assert len(expected_zero_ids) == 3
 
     zero_only = await run_sandbox_query(
         "ad_group_efficiency",
         {"zero_conversions_only": True, "limit": 50},
     )
     assert zero_only.rowsScanned == 10400
-    assert zero_only.rowsReturned == 14
+    assert zero_only.rowsReturned == 3
     assert [row["ad_group_id"] for row in zero_only.table] == expected_zero_ids
 
     expected_by_id = {row["ad_group_id"]: row for row in all_ags.table}

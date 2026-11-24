@@ -96,6 +96,7 @@ import type {
   Mutation,
   PlaybookDefinition,
   PlaybookId,
+  PortfolioPlan,
   ReallocationToolOutput,
   RelayUIMessage,
   ResolvedPlaybook,
@@ -961,6 +962,47 @@ export function WorkspaceClient({
     [clearError, sendMessage],
   );
 
+  const handleApplyPortfolioPlan = useCallback(
+    async (plan: PortfolioPlan) => {
+      // All of a plan's shifts go through one validated append, so the plan is
+      // applied whole or not at all. Errors propagate to the plan panel.
+      const prevSnapshot = readStoredMutations();
+      const prevRoas = twinStateRef.current?.totals.blendedRoas ?? 0;
+      const { mutations, state } = await appendTwinMutations(plan.mutations);
+      setChannelDeltas(computeChannelDeltas(twinStateRef.current, state));
+      setTwinState(state);
+      setActiveMutations(mutations);
+      setTwinError(null);
+      setBackendAlert(null);
+      const lift = state.totals.blendedRoas - prevRoas;
+      setImpactToast({
+        id: `plan-toast-${Date.now()}`,
+        title: `✓ ${plan.label} plan applied · $${Math.round(plan.movedPerDay).toLocaleString('en-US')}/day moved`,
+        detail: `Blended ROAS ${prevRoas.toFixed(2)}x → ${state.totals.blendedRoas.toFixed(2)}x (${
+          lift >= 0 ? '+' : ''
+        }${lift.toFixed(2)}x)`,
+        tone: 'green',
+        undoSnapshot: prevSnapshot,
+      });
+      if (dbConnectedRef.current && workspaceIdRef.current) {
+        void syncWorkspaceMutations(workspaceIdRef.current, mutations).then((res) => {
+          if (!res) {
+            setSyncWarning({
+              id: `sync-mut-${Date.now()}`,
+              severity: 'warning',
+              title: 'SAVED LOCALLY',
+              message:
+                'Your portfolio plan is active in this browser, but syncing to the cloud database failed.',
+              technicalDetail: 'PUT /api/agent/workspace/mutations failed',
+              retryable: false,
+            });
+          }
+        });
+      }
+    },
+    [],
+  );
+
   const handleDeclineReallocation = useCallback(
     (proposal: ReallocationToolOutput, decisionKey: string) => {
       setProposalDecisions((prev) => ({
@@ -1429,6 +1471,7 @@ export function WorkspaceClient({
             onDecline={(proposal) =>
               handleDeclineReallocation(proposal, part.toolCallId)
             }
+            onApplyPlan={handleApplyPortfolioPlan}
             onRetry={handleRetry}
           />
         );
@@ -1444,6 +1487,7 @@ export function WorkspaceClient({
             errorText={part.state === 'output-error' ? part.errorText : undefined}
             twinState={twinState}
             disabled={isStreaming}
+            architectMode={architectMode}
             onShare={handleOpenWorkflowShare}
             onOpenInDrawer={handleOpenWorkflowInDrawer}
             onRunNextStepPrompt={handleWorkflowPromptAction}
@@ -1511,6 +1555,7 @@ export function WorkspaceClient({
               onDecline={(proposal) =>
                 handleDeclineReallocation(proposal, part.toolCallId)
               }
+              onApplyPlan={handleApplyPortfolioPlan}
               onRetry={handleRetry}
             />
           );
@@ -1528,6 +1573,7 @@ export function WorkspaceClient({
               errorText={errText}
               twinState={twinState}
               disabled={isStreaming}
+              architectMode={architectMode}
               onShare={handleOpenWorkflowShare}
               onOpenInDrawer={handleOpenWorkflowInDrawer}
               onRunNextStepPrompt={handleWorkflowPromptAction}
@@ -2084,6 +2130,7 @@ export function WorkspaceClient({
         selectedWorkflowId={selectedWorkflowId}
         twinState={twinState}
         isStreaming={isStreaming}
+        architectMode={architectMode}
         onSelectWorkflow={setSelectedWorkflowId}
         onRenameWorkflow={handleRenameWorkflow}
         onRemoveWorkflow={handleRemoveWorkflow}

@@ -1232,3 +1232,158 @@ export function DailyAnomalyChart({
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Guardrail backtest timeline                                         */
+/* ------------------------------------------------------------------ */
+
+export interface BacktestSeriesPoint {
+  date: string;
+  spend: number;
+  atRiskSpend: number;
+  atRiskPct: number;
+}
+
+export interface BacktestClientSummary {
+  alertDays: number;
+  totalDays: number;
+  longestStreakDays: number;
+  firstAlertDate: string | null;
+  flaggedSpend: number;
+}
+
+/**
+ * Recomputes alert statistics for any threshold from the series the server
+ * returned once, so dragging the threshold slider never issues a request.
+ * Mirrors `summarize_backtest` in `backend/app/backtest.py`.
+ */
+export function computeBacktestSummary(
+  points: ReadonlyArray<BacktestSeriesPoint>,
+  thresholdPct: number,
+): BacktestClientSummary {
+  const threshold = Number.isFinite(thresholdPct) ? thresholdPct : 0;
+  let alertDays = 0;
+  let longest = 0;
+  let current = 0;
+  let flaggedSpend = 0;
+  let firstAlertDate: string | null = null;
+  for (const point of points) {
+    if (Number.isFinite(point.atRiskPct) && point.atRiskPct >= threshold) {
+      alertDays += 1;
+      current += 1;
+      longest = Math.max(longest, current);
+      flaggedSpend += Number.isFinite(point.atRiskSpend) ? point.atRiskSpend : 0;
+      if (firstAlertDate === null) {
+        firstAlertDate = point.date;
+      }
+    } else {
+      current = 0;
+    }
+  }
+  return {
+    alertDays,
+    totalDays: points.length,
+    longestStreakDays: longest,
+    firstAlertDate,
+    flaggedSpend: Number(flaggedSpend.toFixed(2)),
+  };
+}
+
+export interface BacktestTimelineProps {
+  points: ReadonlyArray<BacktestSeriesPoint>;
+  thresholdPct: number;
+  events?: ReadonlyArray<{ date: string; brokenLinks: number }>;
+  testId?: string;
+}
+
+const BACKTEST_BAR_STEP = 10;
+const BACKTEST_BAR_WIDTH = 7;
+const BACKTEST_PLOT_HEIGHT = 72;
+const BACKTEST_MARKER_HEIGHT = 10;
+
+export function BacktestTimeline({
+  points,
+  thresholdPct,
+  events = [],
+  testId,
+}: BacktestTimelineProps) {
+  if (points.length === 0) {
+    return null;
+  }
+  const maxPct = points.reduce((acc, p) => Math.max(acc, p.atRiskPct), 0);
+  const scaleMax = Math.max(1, Math.max(maxPct, thresholdPct) * 1.15);
+  const width = points.length * BACKTEST_BAR_STEP;
+  const height = BACKTEST_PLOT_HEIGHT + BACKTEST_MARKER_HEIGHT;
+  const toY = (pct: number) =>
+    BACKTEST_PLOT_HEIGHT - (Math.min(scaleMax, Math.max(0, pct)) / scaleMax) * BACKTEST_PLOT_HEIGHT;
+  const thresholdY = toY(thresholdPct);
+  const indexByDate = new Map(points.map((p, idx) => [p.date, idx]));
+  const summary = computeBacktestSummary(points, thresholdPct);
+
+  return (
+    <div className="backtest-timeline" data-testid={testId}>
+      <svg
+        className="backtest-timeline-svg"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={`Daily share of spend with no recent conversions from ${formatShortIsoDate(
+          points[0].date,
+        )} to ${formatShortIsoDate(points[points.length - 1].date)}. ${summary.alertDays} of ${
+          summary.totalDays
+        } days at or above ${thresholdPct}%.`}
+      >
+        {points.map((point, idx) => {
+          const y = toY(point.atRiskPct);
+          const isAlert = point.atRiskPct >= thresholdPct;
+          return (
+            <rect
+              key={point.date}
+              x={idx * BACKTEST_BAR_STEP + (BACKTEST_BAR_STEP - BACKTEST_BAR_WIDTH) / 2}
+              y={y}
+              width={BACKTEST_BAR_WIDTH}
+              height={Math.max(1, BACKTEST_PLOT_HEIGHT - y)}
+              fill={isAlert ? '#D97706' : '#C9CDD2'}
+            >
+              <title>{`${formatShortIsoDate(point.date)}: ${point.atRiskPct.toFixed(1)}% of spend${
+                isAlert ? ' (alert)' : ''
+              }`}</title>
+            </rect>
+          );
+        })}
+        <line
+          x1="0"
+          x2={width}
+          y1={thresholdY}
+          y2={thresholdY}
+          stroke="#171717"
+          strokeWidth="1.5"
+          strokeDasharray="6 4"
+          vectorEffect="non-scaling-stroke"
+        />
+        {events.map((evt) => {
+          const idx = indexByDate.get(evt.date);
+          if (idx === undefined) {
+            return null;
+          }
+          const cx = idx * BACKTEST_BAR_STEP + BACKTEST_BAR_STEP / 2;
+          return (
+            <polygon
+              key={evt.date}
+              points={`${cx - 5},${height} ${cx + 5},${height} ${cx},${BACKTEST_PLOT_HEIGHT + 1}`}
+              fill="#E5484D"
+            >
+              <title>{`${formatShortIsoDate(evt.date)}: ${evt.brokenLinks} landing page${
+                evt.brokenLinks === 1 ? '' : 's'
+              } broke`}</title>
+            </polygon>
+          );
+        })}
+      </svg>
+      <div className="backtest-timeline-axis">
+        <span>{formatShortIsoDate(points[0].date)}</span>
+        <span>{formatShortIsoDate(points[points.length - 1].date)}</span>
+      </div>
+    </div>
+  );
+}

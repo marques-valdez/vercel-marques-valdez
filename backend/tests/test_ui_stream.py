@@ -1467,7 +1467,7 @@ async def test_tools_reject_boolean_values_for_numeric_parameters(
     valid_bool_res = await tool_map["analyze_in_sandbox"].ainvoke(
         {"template_id": "ad_group_efficiency", "zero_conversions_only": True, "limit": 5}
     )
-    assert valid_bool_res["rowsReturned"] == 5
+    assert valid_bool_res["rowsReturned"] == 3
 
     # Verify end-to-end SSE turn converts boolean numeric tool args into tool-output-error parts.
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-gateway-key")

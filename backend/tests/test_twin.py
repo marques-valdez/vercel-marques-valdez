@@ -279,6 +279,15 @@ def test_rows_csv_schema_and_sqlite_reconciliation() -> None:
         ag.adGroupId for ag in base.adGroups if ag.destinationHttpStatus == 404
     }
     assert len(broken_ag_ids) == 14
+    broken_since = {
+        issue.adGroupId: issue.brokenSince
+        for issue in base.hygieneIssues
+        if issue.issueType == "broken_404"
+    }
+    assert set(broken_since) == broken_ag_ids
+    assert all(since is not None for since in broken_since.values())
+    assert sorted(set(broken_since.values())) == ["2026-08-10", "2026-10-27", "2026-11-12"]
+    converted_before_break: set[str] = set()
     for r in rows:
         spend_val = float(r["spend"])
         clicks_val = int(r["clicks"])
@@ -287,13 +296,19 @@ def test_rows_csv_schema_and_sqlite_reconciliation() -> None:
         assert spend_val >= 1.0
         assert clicks_val >= 1
         assert conv_val >= 0
-        if r["ad_group_id"] in broken_ag_ids:
+        ag_id = r["ad_group_id"]
+        if ag_id in broken_ag_ids and r["date"] >= broken_since[ag_id]:
             assert conv_val == 0
             assert pipe_val == 0.0
         elif conv_val == 0:
             assert pipe_val == 0.0
         else:
             assert pipe_val >= 1.0
+            if ag_id in broken_ag_ids:
+                converted_before_break.add(ag_id)
+
+    # Pages that broke part-way through the window converted while they were healthy.
+    assert len(converted_before_break) == 11
 
     conn = sqlite3.connect(":memory:")
     conn.execute(

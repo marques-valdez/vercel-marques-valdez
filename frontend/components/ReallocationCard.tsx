@@ -13,8 +13,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CampaignSummary,
   Mutation,
+  PortfolioPlan,
   ReallocationToolOutput,
 } from '@/lib/types';
+import { PortfolioPlans } from './PortfolioPlans';
 import {
   BarRow,
   BeforeAfterBars,
@@ -33,6 +35,7 @@ interface ReallocationCardProps {
   getMutations?: () => Mutation[];
   onApprove: (output: ReallocationToolOutput) => Promise<void>;
   onDecline: (output: ReallocationToolOutput) => void;
+  onApplyPlan?: (plan: PortfolioPlan) => Promise<void>;
   onRetry: () => void;
 }
 
@@ -156,6 +159,7 @@ export function ReallocationCard({
   getMutations,
   onApprove,
   onDecline,
+  onApplyPlan,
   onRetry,
 }: ReallocationCardProps) {
   const [submitting, setSubmitting] = useState(false);
@@ -811,6 +815,15 @@ export function ReallocationCard({
             </p>
           ) : null}
         </div>
+      ) : null}
+
+      {onApplyPlan ? (
+        <PortfolioPlans
+          disabled={disabled || submitting}
+          architectMode={architectMode}
+          getMutations={getMutations}
+          onApplyPlan={onApplyPlan}
+        />
       ) : null}
 
       <details className="technical-drawer">

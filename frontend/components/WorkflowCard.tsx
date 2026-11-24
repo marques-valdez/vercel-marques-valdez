@@ -6,7 +6,8 @@
  * Streams live 6-step dry runs directly from `POST /api/agent/workflow/run`
  * over SSE (with unmount `AbortController` cleanup and chunk-boundary framing)
  * and links into both the full-screen `WorkflowsDrawer` DAG visualizer and the
- * `ShareModal` playbook URL builder.
+ * `ShareModal` playbook URL builder. `BacktestPanel` shows how often the alert
+ * would have fired on past daily rows.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -24,6 +25,7 @@ import type {
   WorkflowRunStepEvent,
   WorkflowToolOutput,
 } from '@/lib/types';
+import { BacktestPanel } from './BacktestPanel';
 import { WorkflowNextSteps } from './WorkflowNextSteps';
 import { WorkflowVisualSummary, resolveChannelTone } from './charts';
 
@@ -33,6 +35,7 @@ interface WorkflowCardProps {
   errorText?: string;
   twinState?: DerivedTwinState | null;
   disabled?: boolean;
+  architectMode?: boolean;
   onShare: (slug: string) => void;
   onOpenInDrawer?: (workflowId: string) => void;
   onRunNextStepPrompt?: (prompt: string, tierHint: 'fast' | 'reasoning') => void;
@@ -66,6 +69,7 @@ export function WorkflowCard({
   errorText,
   twinState = null,
   disabled = false,
+  architectMode = false,
   onShare,
   onOpenInDrawer,
   onRunNextStepPrompt,
@@ -415,6 +419,8 @@ export function WorkflowCard({
           {dryRunError}
         </p>
       ) : null}
+
+      <BacktestPanel workflow={output} architectMode={architectMode} />
 
       <div className="tool-card-footer">
         <div className="card-actions-inline">

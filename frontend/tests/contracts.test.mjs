@@ -2498,3 +2498,175 @@ test('V7 demo polish: PlaybookGrid live badges, HygieneCard resolved state, Real
   );
   assert.equal(archDoneHtml.includes('(2/4 ✓)'), true);
 });
+
+test('computeBacktestSummary recomputes alert days client-side below, inside, and above the data range', () => {
+  const { computeBacktestSummary } = loadTsModule('components/charts.tsx');
+  const { clampBacktestThreshold, resolveBacktestSliderMax } = loadTsModule(
+    'components/BacktestPanel.tsx',
+  );
+  const pcts = [6, 9, 21, 21, 8, 21, 21, 21];
+  const points = pcts.map((pct, idx) => ({
+    date: `2026-11-${String(idx + 1).padStart(2, '0')}`,
+    spend: 1000,
+    atRiskSpend: pct * 10,
+    atRiskPct: pct,
+  }));
+
+  const below = computeBacktestSummary(points, 5);
+  assert.deepEqual(
+    [below.alertDays, below.totalDays, below.longestStreakDays, below.firstAlertDate],
+    [8, 8, 8, '2026-11-01'],
+  );
+  const inside = computeBacktestSummary(points, 15);
+  assert.deepEqual(
+    [inside.alertDays, inside.longestStreakDays, inside.firstAlertDate, inside.flaggedSpend],
+    [5, 3, '2026-11-03', 1050],
+  );
+  const edge = computeBacktestSummary(points, 21);
+  assert.equal(edge.alertDays, 5);
+  const above = computeBacktestSummary(points, 22);
+  assert.deepEqual(
+    [above.alertDays, above.longestStreakDays, above.firstAlertDate, above.flaggedSpend],
+    [0, 0, null, 0],
+  );
+  assert.equal(computeBacktestSummary([], 10).totalDays, 0);
+
+  assert.equal(resolveBacktestSliderMax(15, 21.3), 30);
+  assert.equal(resolveBacktestSliderMax(15, 38.2), 45);
+  assert.equal(resolveBacktestSliderMax(80, 21.3), 80);
+  assert.equal(resolveBacktestSliderMax(15, 400), 100);
+  assert.equal(clampBacktestThreshold(0, 30), 1);
+  assert.equal(clampBacktestThreshold(99, 30), 30);
+  assert.equal(clampBacktestThreshold(Number.NaN, 30), 1);
+});
+
+test('BacktestTimeline colors alert days and marks broken-link dates; panels start collapsed behind a button', () => {
+  const React = requireFromFrontend('react');
+  const ReactDOMServer = requireFromFrontend('react-dom/server');
+  const { BacktestTimeline } = loadTsModule('components/charts.tsx');
+  const { BacktestPanel } = loadTsModule('components/BacktestPanel.tsx');
+
+  const points = [4, 5, 18, 19, 6].map((pct, idx) => ({
+    date: `2026-10-${String(idx + 25).padStart(2, '0')}`,
+    spend: 1000,
+    atRiskSpend: pct * 10,
+    atRiskPct: pct,
+  }));
+  const html = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(BacktestTimeline, {
+      points,
+      thresholdPct: 15,
+      events: [
+        { date: '2026-10-27', brokenLinks: 8 },
+        { date: '2026-01-01', brokenLinks: 2 },
+      ],
+      testId: 'tl',
+    }),
+  );
+  assert.equal((html.match(/<rect /g) ?? []).length, 5);
+  assert.equal((html.match(/fill="#D97706"/g) ?? []).length, 2);
+  assert.equal((html.match(/<polygon /g) ?? []).length, 1);
+  assert.equal(html.includes('Oct 27: 8 landing pages broke'), true);
+  assert.equal(html.includes('2 of 5 days at or above 15%'), true);
+  assert.equal(
+    ReactDOMServer.renderToStaticMarkup(
+      React.createElement(BacktestTimeline, { points: [], thresholdPct: 15 }),
+    ),
+    '',
+  );
+
+  const panelHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(BacktestPanel, {
+      workflow: {
+        workflowId: 'wf_test',
+        title: 'Daily pacing',
+        template: 'daily-pacing-guardrail',
+        slug: 'daily-pacing-guardrail',
+        channels: ['google_ads'],
+        threshold: 15,
+        steps: [],
+        temporalCode: '',
+      },
+    }),
+  );
+  assert.equal(panelHtml.includes('workflow-backtest-button'), true);
+  assert.equal(panelHtml.includes('Backtest alert history'), true);
+  assert.equal(panelHtml.includes('workflow-backtest-panel'), false);
+});
+
+test('portfolio plan bars share one scale and a plan is applied through a single mutation append', () => {
+  const React = requireFromFrontend('react');
+  const ReactDOMServer = requireFromFrontend('react-dom/server');
+  const { computeSharedPlanBars, formatCompactCurrency, PortfolioPlans } = loadTsModule(
+    'components/PortfolioPlans.tsx',
+  );
+  const { ReallocationCard } = loadTsModule('components/ReallocationCard.tsx');
+
+  const bars = computeSharedPlanBars([
+    { incrementalPipelineP10: 20000, incrementalPipelineP50: 25000, incrementalPipelineP90: 30000 },
+    { incrementalPipelineP10: 45000, incrementalPipelineP50: 50000, incrementalPipelineP90: 60000 },
+    { incrementalPipelineP10: 90000, incrementalPipelineP50: 95000, incrementalPipelineP90: 100000 },
+  ]);
+  assert.deepEqual(bars[0], { leftPct: 20, widthPct: 10, medianPct: 25 });
+  assert.deepEqual(bars[2], { leftPct: 90, widthPct: 10, medianPct: 95 });
+  assert.ok(bars[0].medianPct < bars[1].medianPct && bars[1].medianPct < bars[2].medianPct);
+  assert.deepEqual(computeSharedPlanBars([]), []);
+  assert.deepEqual(
+    computeSharedPlanBars([
+      { incrementalPipelineP10: 0, incrementalPipelineP50: 0, incrementalPipelineP90: 0 },
+    ]),
+    [{ leftPct: 0, widthPct: 1, medianPct: 0 }],
+  );
+
+  assert.equal(formatCompactCurrency(53407.8), '$53.4K');
+  assert.equal(formatCompactCurrency(104650), '$105K');
+  assert.equal(formatCompactCurrency(-1200), '-$1.2K');
+  assert.equal(formatCompactCurrency(475), '$475');
+  assert.equal(formatCompactCurrency(Number.NaN), '$0');
+
+  const launchHtml = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(PortfolioPlans, { disabled: false, onApplyPlan: async () => {} }),
+  );
+  assert.equal(launchHtml.includes('Compare 3 portfolio plans'), true);
+  assert.equal(launchHtml.includes('portfolio-plans-panel'), false);
+
+  const output = {
+    proposalId: 'prop_plan_check',
+    fromCampaign: 'cmp_social_low',
+    toCampaign: 'cmp_search_high',
+    amountPerDay: 250,
+    before: { fromDailyBudget: 800, toDailyBudget: 500, fromRoas: 1.5, toRoas: 4.5, totalDailyBudget: 2500 },
+    after: { fromDailyBudget: 550, toDailyBudget: 750, fromRoas: 1.5, toRoas: 4.5, totalDailyBudget: 2500 },
+    blendedRoasBefore: 3.1,
+    blendedRoasAfter: 3.4,
+  };
+  const baseProps = {
+    state: 'completed',
+    output,
+    decision: null,
+    disabled: false,
+    onApprove: async () => {},
+    onDecline: () => {},
+    onRetry: () => {},
+  };
+  const withPlans = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, { ...baseProps, onApplyPlan: async () => {} }),
+  );
+  const withoutPlans = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(ReallocationCard, baseProps),
+  );
+  assert.equal(withPlans.includes('portfolio-compare-button'), true);
+  assert.equal(withoutPlans.includes('portfolio-compare-button'), false);
+
+  const workspaceSource = fs.readFileSync(
+    path.join(frontendRoot, 'components/WorkspaceClient.tsx'),
+    'utf8',
+  );
+  const handlerStart = workspaceSource.indexOf('const handleApplyPortfolioPlan');
+  const handlerEnd = workspaceSource.indexOf('const handleDeclineReallocation');
+  assert.ok(handlerStart > 0 && handlerEnd > handlerStart);
+  const handlerSource = workspaceSource.slice(handlerStart, handlerEnd);
+  assert.equal((handlerSource.match(/appendTwinMutations\(/g) ?? []).length, 1);
+  assert.equal(handlerSource.includes('appendTwinMutations(plan.mutations)'), true);
+  assert.equal(handlerSource.includes('undoSnapshot: prevSnapshot'), true);
+});

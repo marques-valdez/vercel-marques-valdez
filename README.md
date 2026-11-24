@@ -28,7 +28,9 @@ Browser (Next.js 15 App Router on Fluid Compute, ai@7 @ai-sdk/react useChat, Gei
    │  GET  /api/agent/trends?days=30        (30-day channel ROAS sparklines & 7d-vs-7d deltas)
    │  POST /api/agent/sandbox/query         (4 parameterized SQL slices without extra LLM turns)
    │  POST /api/agent/reallocation/simulate (What-If campaign-pair 2,000-trial Monte Carlo forecast)
+   │  POST /api/agent/reallocation/optimize (3 whole-portfolio plans scored in one Monte Carlo job)
    │  POST /api/agent/workflows/run         (6-step fan-out/fan-in workflow dry-run SSE)
+   │  POST /api/agent/workflows/backtest    (Alert history over the trailing daily rows)
    │  GET|PUT|DELETE /api/agent/workspace*  (Optional Neon Serverless Postgres workspace sync)
    │  GET  /api/agent/health                (Python runtime, Sandbox, pricing & DB status)
    ▼
@@ -43,12 +45,15 @@ Vercel Services Project (vercel.json — single domain, zero required datastore)
 - **Python owns agent orchestration and state derivation**: There is no TypeScript agent, no Next.js `/api/chat` route, no Edge runtime export, and no simulated model mode.
 - **Marketing Manager default UI + opt-in Architect X-Ray**: The default workspace stays focused on paid-media operations (30-day channel ROAS sparklines, live playbook urgency pills, concise progressive Top-5/Top-6 tool cards, sequential `Next table` follow-ups, interactive What-If campaign-pair budget modeling, floating `ImpactToast`, and a `Changes (N)` Undo audit popover). Toggling `X-Ray` in the header (or visiting `/?xray=1`) reveals the live Vercel Services topology bar, pre-send AI Gateway route preview, `Primary 503 drill`, `(N/4 ✓)` guided demo tour, `Protocol X-Ray` wire inspector, and FinOps Inspector drawer.
 - **Deterministic Digital Twin + optional Neon Postgres**: `scripts/generate_twin.py` (`seed = 20261117`) produces committed read-only `backend/data/twin.json` and `backend/data/rows.csv` (`12` campaigns, `104` ad groups, `10,400` daily performance rows across Google Ads, LinkedIn Ads, and Meta Ads, `$6,167` daily budget, `14` broken 404 creatives, and `9` UTM violations). Visitor mutations live in `localStorage["relay.twin.mutations.v1"]` (capped at 50 `pydantic`-validated items) and replay deterministically in Python—syncing to Neon Serverless Postgres automatically when `DATABASE_URL` is configured.
+- **Dated scenarios in the synthetic rows**: The `SCENARIOS` table at the top of `scripts/generate_twin.py` scripts when each landing page broke (three long-standing, eight in a site migration on `2026-10-27`, three on `2026-11-12`), one conversion-tracking outage that was later fixed, and two gradual conversion-rate trends. Campaign totals are rescaled to each campaign's target ROAS, so the scenarios change which days and ad groups convert without changing any campaign or portfolio total.
+- **Alert-history backtest**: `Backtest alert history` on a recurring check plots, for each of the last `86` days, the share of spend on ad groups with zero conversions in the previous `14` days, and counts the days at or above the alert threshold. The threshold slider recomputes in the browser from one response. The metric reacts about `14` days after a page breaks and also flags low-volume ad groups that went two weeks without converting by chance; both are stated in the panel.
+- **Portfolio plans**: `Compare 3 portfolio plans` on a budget proposal builds `Cautious` / `Balanced` / `Bold` plans that move `10%` / `25%` / `50%` of the three lowest-return campaigns' budgets into the three highest-return campaigns, and scores all three on the same `2,000` random draws in one Vercel Sandbox job (`backend/app/portfolio_sim.py` runs unchanged in the microVM and in-process). Plans are defined by how much budget moves: under the simulator's assumptions (independent days, historical ROAS holds at the new spend) a larger move raises the low, expected, and high outcomes together, so the trade-off shown is total lift against lift per dollar moved. Applying a plan appends ordinary `reallocate_budget` mutations in one validated call.
 
 ## Production Rollout Plan & Pre-Kickoff Customer Readout
 
 - **5-Stage Production Rollout (`Preview → Validation → Canary → Cutover → Rollback`):**
   1. **Preview (`Week 1`):** Link repo in `iad1` (`~2–5 ms` from GCP `us-east4`); wire GCP OIDC Workload Identity Federation and Vertex AI BYOK Virtual Models (`vmc/relay-fast`, `vmc/relay-reasoning`). Every PR generates an isolated Preview URL in `<3 min`.
-  2. **Validation (`Weeks 1–2`):** Gate promotion on `156` Python `pytest` + `DeepEval` Digital Twin write checks, `36` frontend contract/whitebox tests, Playwright E2E suites, `70/30` shadow-traffic routing accuracy, and Week 1 verification of Vertex AI Provisioned Throughput over BYOK.
+  2. **Validation (`Weeks 1–2`):** Gate promotion on `170` Python `pytest` + `DeepEval` Digital Twin write checks, `39` frontend contract/whitebox tests, Playwright E2E suites, `70/30` shadow-traffic routing accuracy, and Week 1 verification of Vertex AI Provisioned Throughput over BYOK.
   3. **Canary (`Week 3`):** Shift `5% → 25% → 50%` of self-serve PLG cohorts via Pro/Enterprise **Rolling Releases**, gating on `<0.5%` AI Gateway 5xx, `>99%` SSE completion, `p95` TTFT, and flat `GKE` pod RSS during `10.4K`-row Sandbox queries.
   4. **Cutover (`Week 4`):** Promote to `100%` of UI traffic while keeping `100%` of Python `LangGraph`, `Temporal` cron DAGs, and `AlloyDB` intact on `GCP us-east4`.
   5. **Rollback (`< 5 Seconds`):** **Vercel Instant Rollback** reverts to the prior immutable build in `<5s` with zero rebuild, paired with Python `OPENAI_BASE_URL` / `SANDBOX_DISABLED=1` kill-switches on `GKE`.
@@ -59,8 +64,8 @@ Vercel Services Project (vercel.json — single domain, zero required datastore)
 - **IDE & Agentic Build Stack:** Built in a Linux cloud workstation via **agentic CLI/IDE orchestration** (architecture planner, parallel Python `uv`/`FastAPI`/`LangGraph` + TypeScript/Next.js 15 builders, and Playwright headless Chromium UX reviewers) anchored to committed Option A/B specs.
 - **5-Layer AI Validation Suite:**
   1. **Deterministic Digital Twin Ground Truth (`seed = 20261117`):** Fixed-point Python `Decimal` mutation replay checks every tool call's ROAS, spend-at-risk, and budget math to the cent.
-  2. **156 Python Backend & Agent Tests (`uv run pytest`):** Covers `/v1/decisions` confidence fallbacks (`test_semantic_router.py`), malformed/double-quoted LLM tool-arg recovery (`unwrap_llm_str` caught on live free-tier models), golden SSE v1 ordering, `max_tokens=2048` truncation alerts, and 2,000-trial Monte Carlo invariants.
-  3. **36 Frontend Contract & Whitebox Tests (`npm test`):** Verifies AI SDK 7 `UIMessage` cards, retry error suppression (`tool-errors.ts`), per-`toolCallId` human approval gates, and `zod`-strict `/p/[slug]` codecs.
+  2. **170 Python Backend & Agent Tests (`uv run pytest`):** Covers `/v1/decisions` confidence fallbacks (`test_semantic_router.py`), malformed/double-quoted LLM tool-arg recovery (`unwrap_llm_str` caught on live free-tier models), golden SSE v1 ordering, `max_tokens=2048` truncation alerts, and 2,000-trial Monte Carlo invariants.
+  3. **39 Frontend Contract & Whitebox Tests (`npm test`):** Verifies AI SDK 7 `UIMessage` cards, retry error suppression (`tool-errors.ts`), per-`toolCallId` human approval gates, and `zod`-strict `/p/[slug]` codecs.
   4. **Live Browser & `503` Failover Rubric (Playwright Chromium):** Automated E2E runs verify AI Gateway turns, `Primary 503 drill` 2-hop failover, campaign-pair Sandbox simulations, `Changes (N)` Undo replay, `375px`/`1440px` layout geometry, and `0` HTTP `>=400` responses.
   5. **Manual Transcript Review:** Eliminated post-card duplicate Markdown tables via `build_system_prompt()` visual de-duplication rules (`2–4` bullets, `~60–110` words max) + sequential `Next table` follow-up chips.
 
@@ -82,7 +87,7 @@ Vercel Services Project (vercel.json — single domain, zero required datastore)
 │   ├── uv.lock                                              # Locked Python dependencies
 │   ├── data/                                                # Committed base twin.json & rows.csv (10,400 rows)
 │   ├── app/                                                 # FastAPI routes, LangGraph agent, UI stream v1 adapter, Sandbox & DB
-│   └── tests/                                               # 156 pytest checks (twin, SSE, semantic router, Monte Carlo, DB)
+│   └── tests/                                               # 170 pytest checks (twin, SSE, router, Monte Carlo, backtest, DB)
 └── frontend/                                                # Next.js 15 workspace, typed cards, charts, Undo ledger, /p/[slug] & /api/og
 ```
 
@@ -101,6 +106,9 @@ Copy `.env.example` to `.env.local` (or run `vercel env pull` on a linked Vercel
 | `GATEWAY_REPORTING_TAGS` | No | `"0"` | Set to `"1"` to attach `["app:relay-studio-demo"]` reporting tags |
 | `SANDBOX_DISABLED` | No | `"0"` | Set to `"1"` to force the badged in-process Python fallback |
 | `DATABASE_URL` | No | `""` | Optional Neon Serverless Postgres URL (falls back to browser-local mode) |
+| `RELAY_RESEED_DATASET` | No | `"0"` | Set to `"1"` to let a deployment replace `relay_daily_performance` when its bundled `rows.csv` differs from what Neon holds |
+
+**Regenerated data and a shared database.** `backend/app/db.py` stores a SHA-256 of the seeded `rows.csv` in `relay_dataset_meta`. If a deployment's bundled CSV differs from the rows already in Neon, it leaves them untouched unless `RELAY_RESEED_DATASET=1`; the backtest and portfolio plans then compute from the bundled CSV, while the existing SQL cards and trend sparklines keep reading the older Neon rows. Preview and production deployments that share one database should set the flag on the Production environment only, after the new data is merged: with the flag on, the first request truncates and reloads the table in one transaction, and any other live deployment bundling a different CSV would load its own rows back.
 
 When neither `VERCEL_OIDC_TOKEN` nor `AI_GATEWAY_API_KEY` is configured, `POST /api/agent/chat` streams a valid `x-vercel-ai-ui-message-stream: v1` setup `error` part instructing the operator to run `vercel env pull` or set `AI_GATEWAY_API_KEY`.
 

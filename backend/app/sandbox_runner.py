@@ -835,3 +835,75 @@ async def run_monte_carlo_reallocation_in_sandbox(
         probabilityOfPositiveLiftPct=float(parsed["probabilityOfPositiveLiftPct"]),
         targetSaturationDragPct=float(parsed["targetSaturationDragPct"]),
     )
+
+
+async def run_portfolio_simulation_in_sandbox(
+    spec: Mapping[str, Any],
+    *,
+    prefer_in_process: bool = False,
+) -> tuple[dict[str, Any], Literal["sandbox", "in-process"], float]:
+    """Score several portfolio plans in one microVM, or in-process when unavailable.
+
+    Uploads `app/portfolio_sim.py` unchanged plus a `spec.json` file, so the sandbox
+    and the in-process fallback execute the same source. Returns the parsed result,
+    the mode that actually ran, and elapsed milliseconds.
+    """
+    from app import portfolio_sim
+
+    t0 = time.perf_counter()
+    parsed: dict[str, Any] | None = None
+    mode: Literal["sandbox", "in-process"] = "in-process"
+
+    can_launch_sandbox = False
+    if not prefer_in_process and not is_sandbox_disabled():
+        budget = _request_sandbox_budget.get()
+        if budget is None:
+            budget = _RequestSandboxBudget()
+            _request_sandbox_budget.set(budget)
+        if budget.count < MAX_SANDBOXES_PER_REQUEST:
+            budget.count += 1
+            can_launch_sandbox = True
+
+    if can_launch_sandbox:
+        try:
+            job_source = Path(portfolio_sim.__file__).read_text(encoding="utf-8")
+            spec_json = json.dumps(dict(spec), separators=(",", ":"), allow_nan=False)
+            with anyio.fail_after(SANDBOX_TIMEOUT_SECONDS):
+                async with sandbox.create_sandbox(
+                    network_policy=NetworkPolicy.deny_all(),
+                    execution_time_limit=SANDBOX_TIMEOUT_SECONDS,
+                    persistent=False,
+                ) as box:
+                    await box.fs.write_text("portfolio_sim.py", job_source)
+                    await box.fs.write_text("spec.json", spec_json)
+                    result = await box.run_command(
+                        "python",
+                        ["portfolio_sim.py"],
+                        capture_output=True,
+                        check=True,
+                        kill_after=SANDBOX_KILL_AFTER_SECONDS,
+                    )
+                    raw_out = result.stdout
+                    out_text = (
+                        raw_out.decode("utf-8")
+                        if isinstance(raw_out, (bytes, bytearray))
+                        else str(raw_out or "")
+                    )
+                    candidate = json.loads(out_text)
+                    if (
+                        isinstance(candidate, dict)
+                        and isinstance(candidate.get("plans"), list)
+                        and len(candidate["plans"]) == len(spec["plans"])
+                    ):
+                        parsed = candidate
+                        mode = "sandbox"
+        except Exception:
+            parsed = None
+            mode = "in-process"
+
+    if parsed is None:
+        parsed = portfolio_sim.simulate(spec)
+        mode = "in-process"
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    return parsed, mode, elapsed_ms

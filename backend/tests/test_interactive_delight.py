@@ -38,9 +38,10 @@ def test_trends_endpoint_returns_30_day_chronological_series_and_bounds() -> Non
         assert all(p["spend"] > 0 for p in pts)
         assert all(p["roas"] >= 0 for p in pts)
 
-    # Spend-weighted 7d vs 7d directional sanity on seeded dataset
-    assert payload["channels"]["linkedin_ads"]["deltaPct"] < 0
-    assert payload["channels"]["meta_ads"]["deltaPct"] > 0
+    # Spend-weighted 7d vs 7d directions are pinned to the seeded dataset. Three Meta
+    # landing pages break inside the trailing 30 days (see SCENARIOS in generate_twin.py).
+    assert payload["channels"]["meta_ads"]["deltaPct"] < 0
+    assert payload["channels"]["linkedin_ads"]["deltaPct"] > 0
 
     custom_res = client.get("/api/agent/trends?days=14")
     assert custom_res.status_code == 200

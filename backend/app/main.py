@@ -49,6 +49,12 @@ from pydantic import (
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from app.agent import build_agent_graph
+from app.backtest import (
+    BACKTEST_MAX_DAYS,
+    BACKTEST_MIN_DAYS,
+    BacktestResult,
+    run_guardrail_backtest,
+)
 from app.db import (
     fetch_campaign_daily_series,
     is_database_configured,
@@ -60,6 +66,7 @@ from app.db import (
     save_workspace_mutations,
     save_workspace_workflows,
 )
+from app.portfolio import PortfolioOptimizeResult, optimize_portfolio
 from app.pricing import get_pricing_source
 from app.router import TierName, route_turn, route_turn_async
 from app.sandbox_runner import (
@@ -206,12 +213,17 @@ _simulate_rate_limiter = SlidingWindowRateLimiter(
     max_requests=60,
     window_seconds=RATE_LIMIT_WINDOW_SECONDS,
 )
+_backtest_rate_limiter = SlidingWindowRateLimiter(
+    max_requests=30,
+    window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+)
 
 
 def reset_rate_limiter() -> None:
     """Clear all sliding-window rate-limiter buckets (used in isolated tests)."""
     _chat_rate_limiter.reset()
     _simulate_rate_limiter.reset()
+    _backtest_rate_limiter.reset()
 
 
 def extract_client_ip(request: Request) -> str:
@@ -312,6 +324,53 @@ class WorkflowRunRequest(BaseModel):
     def _validate_workflow_spec(self) -> Self:
         normalize_workflow_run_config(self.workflow)
         return self
+
+
+class WorkflowBacktestRequest(BaseModel):
+    """Inbound payload for POST /api/agent/workflows/backtest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workflow: dict[str, Any] | None = None
+    days: int = Field(default=BACKTEST_MAX_DAYS, ge=BACKTEST_MIN_DAYS, le=BACKTEST_MAX_DAYS)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _reject_invalid_scalars(
+        cls,
+        value: Any,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        _raise_if_non_finite_float(value, cls.__name__)
+        _raise_if_lone_surrogate(value, cls.__name__)
+        return handler(value)
+
+    @model_validator(mode="after")
+    def _validate_workflow_spec(self) -> Self:
+        normalize_workflow_run_config(self.workflow)
+        return self
+
+
+class PortfolioOptimizeRequest(BaseModel):
+    """Inbound payload for POST /api/agent/reallocation/optimize."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    mutations: MutationList = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("mutations", "twinMutations"),
+    )
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _reject_invalid_scalars(
+        cls,
+        value: Any,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        _raise_if_non_finite_float(value, cls.__name__)
+        _raise_if_lone_surrogate(value, cls.__name__)
+        return handler(value)
 
 
 class ReallocationSimulateRequest(BaseModel):
@@ -642,6 +701,51 @@ async def reallocation_simulate_endpoint(
             "simulation": simulation.model_dump(),
         }
     )
+
+
+@app.post("/api/agent/reallocation/optimize", response_model=None)
+async def reallocation_optimize_endpoint(
+    request: Request,
+    payload: PortfolioOptimizeRequest = Body(default_factory=PortfolioOptimizeRequest),
+) -> PortfolioOptimizeResult | JSONResponse:
+    allowed, retry_after = _simulate_rate_limiter.check(extract_client_ip(request))
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": (
+                    "Rate limit exceeded for live budget simulations. "
+                    "Please wait a moment before comparing plans again."
+                )
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    budget_token = reset_request_sandbox_budget()
+    try:
+        result = await optimize_portfolio(payload.mutations)
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"detail": [{"msg": str(exc)}]})
+    finally:
+        restore_request_sandbox_budget(budget_token)
+    return JSONResponse(content=result.model_dump(mode="json"))
+
+
+@app.post("/api/agent/workflows/backtest", response_model=None)
+async def workflows_backtest_endpoint(
+    request: Request,
+    payload: WorkflowBacktestRequest = Body(default_factory=WorkflowBacktestRequest),
+) -> BacktestResult | JSONResponse:
+    allowed, retry_after = _backtest_rate_limiter.check(extract_client_ip(request))
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded for backtests. Please wait a moment."},
+            headers={"Retry-After": str(retry_after)},
+        )
+    config = normalize_workflow_run_config(payload.workflow)
+    result = await run_guardrail_backtest(config, days=payload.days)
+    return JSONResponse(content=result.model_dump(mode="json"))
 
 
 @app.post("/api/agent/workflows/run", response_model=None)

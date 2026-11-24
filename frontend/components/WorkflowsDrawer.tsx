@@ -27,6 +27,7 @@ import type {
 } from '@/lib/types';
 import { WorkflowDagView, type DagStepRunState } from './WorkflowDagView';
 import { WorkflowNextSteps } from './WorkflowNextSteps';
+import { BacktestPanel } from './BacktestPanel';
 import { WorkflowVisualSummary, resolveChannelTone } from './charts';
 
 interface WorkflowsDrawerProps {
@@ -35,6 +36,7 @@ interface WorkflowsDrawerProps {
   selectedWorkflowId: string | null;
   twinState?: DerivedTwinState | null;
   isStreaming?: boolean;
+  architectMode?: boolean;
   onSelectWorkflow: (workflowId: string) => void;
   onRenameWorkflow: (workflowId: string, nextName: string) => void;
   onRemoveWorkflow: (workflowId: string) => void;
@@ -64,6 +66,7 @@ export function WorkflowsDrawer({
   selectedWorkflowId,
   twinState = null,
   isStreaming = false,
+  architectMode = false,
   onSelectWorkflow,
   onRenameWorkflow,
   onRemoveWorkflow,
@@ -592,6 +595,12 @@ export function WorkflowsDrawer({
                       testId="drawer-workflow-digest-preview"
                     />
                   ) : null}
+
+                  <BacktestPanel
+                    workflow={activeWorkflow}
+                    architectMode={architectMode}
+                    testIdPrefix="drawer-workflow"
+                  />
 
                   {onRunNextStepPrompt ? (
                     <WorkflowNextSteps

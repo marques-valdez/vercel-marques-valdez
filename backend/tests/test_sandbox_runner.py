@@ -263,7 +263,9 @@ async def test_channel_slug_and_display_name_normalization_and_aliases(
         {"zero_conversions_only": True, "limit": 10},
     )
     assert ad_groups_zero.templateId == "ad_group_efficiency"
-    assert ad_groups_zero.rowsReturned == 10
+    # Only the three landing pages broken for the whole 100-day window have zero
+    # conversions in total; the other eleven converted before they broke.
+    assert ad_groups_zero.rowsReturned == 3
     assert all(row["total_conversions"] == 0 for row in ad_groups_zero.table)
 
 
